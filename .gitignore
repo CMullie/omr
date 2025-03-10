@@ -1,1 +1,8 @@
 raw_data/
+__pycache__/
+
+*.csv
+.env
+
+# New files / folders
+.DS_Store
