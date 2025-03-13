@@ -1,12 +1,10 @@
 import re
 import json
 import pandas as pd
+import os
 
-output_dir = "raw_data/new_boxes_train/json/"
-
-with open('raw_data/ds2_dense/deepscores_train.json') as json_data:
-    d = json.load(json_data)
-    json_data.close()
+intput_dir = "raw_data/new_boxes_complete/big_json/" #<- TO MODIFY
+output_dir = "raw_data/new_boxes_complete/json/"#<- TO MODIFY
 
 dict_new_classes = {'d1p-11': '209',
  'd2p-11': '210',
@@ -303,8 +301,6 @@ def get_possible_classes():
 
 def main():
 
-    images = d['images']
-    annotations = d['annotations']
     class_dico = preprocess_class_lookup(df_class_mapping)
 
     pattern = r'aug-(.*?)-'
@@ -312,97 +308,113 @@ def main():
     dico_cat_count = {}
     possible_classes = get_possible_classes()
 
-    for i in range(len(images)):
-        img = images[i]
-        lst_ann = img["ann_ids"]
-        lst_anno_rework = []
+    # Loop through all files in the folder
+    for filename in os.listdir(intput_dir):
+        if filename.endswith(".json"):  # Check if it's a JSON file
+            file_path = os.path.join(intput_dir, filename)
 
-        for elem in lst_ann:
-            anno = annotations[elem]
+            # Read the JSON file
+            with open(file_path, "r", encoding="utf-8") as file:
+                try:
+                    d = json.load(file)  # Load JSON content
+                    print(f"Contents of {filename}:")
+                except json.JSONDecodeError as e:
+                    print(f"Error reading {filename}: {e}")
+            file.close()
 
-            duration = 0
-            pos = 0
-            is_note = anno["cat_id"][0] in("25", "27", "29", "31", "33", "35", "37", "39")
+            images = d['images']
+            annotations = d['annotations']
 
-            if is_note:
-                duration = anno["comments"].split(";")[1].replace("duration:", "")
-                duration = duration.replace(".", "")
-                pos = anno["comments"].split(";")[2].replace("rel_position:", "")
-                note_class = "d" + str(duration) + "p" + str(pos)
-                index_class = dict_new_classes.get(note_class, None)
+            for i in range(len(images)):
+                img = images[i]
+                lst_ann = img["ann_ids"]
+                lst_anno_rework = []
 
-            if is_note and note_class not in possible_classes: #outlier we exclude
-                pass
-            elif anno["cat_id"][0] not in("42", "122"):
-                dict_anno = {}
+                for elem in lst_ann:
+                    anno = annotations[elem]
 
-                dict_anno["id"] = elem
-                dict_anno["a_bbox_old"] = anno["a_bbox"]
-                dict_anno["a_bbox"] = anno["a_bbox"]
-                dict_anno["cat_id"] = anno["cat_id"].copy()
-                dict_anno["cat_id_old"] = anno["cat_id"].copy()
-                dict_anno["area"] = anno["area"]
+                    duration = 0
+                    pos = 0
+                    is_note = anno["cat_id"][0] in("25", "27", "29", "31", "33", "35", "37", "39")
 
-                dict_anno["img_id"] = img["id"]
-                dict_anno["instance"] = anno["comments"].split(";")[0].replace("instance:", "")
+                    if is_note:
+                        duration = anno["comments"].split(";")[1].replace("duration:", "")
+                        duration = duration.replace(".", "")
+                        pos = anno["comments"].split(";")[2].replace("rel_position:", "")
+                        note_class = "d" + str(duration) + "p" + str(pos)
+                        index_class = dict_new_classes.get(note_class, None)
 
-                if is_note:
-                    dict_anno["duration"] = duration
-                    dict_anno["rel_position"] = pos
-                    dict_anno["a_bbox"]=calcul_new_dim(anno["a_bbox"],int(pos))
-                    dict_anno["cat_id"][0] = index_class
+                    if is_note and note_class not in possible_classes: #outlier we exclude
+                        pass
+                    elif anno["cat_id"][0] not in("42", "122"):
+                        dict_anno = {}
 
-                    # if abs(pos) > 15:
-                    #     print(img["filename"])
+                        dict_anno["id"] = elem
+                        dict_anno["a_bbox_old"] = anno["a_bbox"]
+                        dict_anno["a_bbox"] = anno["a_bbox"]
+                        dict_anno["cat_id"] = anno["cat_id"].copy()
+                        dict_anno["cat_id_old"] = anno["cat_id"].copy()
+                        dict_anno["area"] = anno["area"]
 
-                    if dict_anno["cat_id"][0] not in dico_cat_count.keys():
-                        dico_cat_count[dict_anno["cat_id"][0]] = 1
-                    else:
-                        dico_cat_count[dict_anno["cat_id"][0]] = dico_cat_count[dict_anno["cat_id"][0]] + 1
+                        dict_anno["img_id"] = img["id"]
+                        dict_anno["instance"] = anno["comments"].split(";")[0].replace("instance:", "")
 
-                dict_anno["o_bbox"] = a_bbox_to_o_bbox(dict_anno["a_bbox"])
-                lst_anno_rework.append(dict_anno)
+                        if is_note:
+                            dict_anno["duration"] = duration
+                            dict_anno["rel_position"] = pos
+                            dict_anno["a_bbox"]=calcul_new_dim(anno["a_bbox"],int(pos))
+                            dict_anno["cat_id"][0] = index_class
 
-        json_img = {}
-        json_img["id"] = img["id"]
-        json_img["filename"] = img["filename"]
-        json_img["width"] = img["width"]
-        json_img["height"] = img["height"]
+                            # if abs(pos) > 15:
+                            #     print(img["filename"])
 
-        # Regular expression pattern to capture the word between 'aug-' and '-page'
-        pattern = r'aug-(.*?)-'
-        match = re.search(pattern, img["filename"])
-        if match:
-            police = match.group(1)
-        else:
-            police = "unknown"
+                            if dict_anno["cat_id"][0] not in dico_cat_count.keys():
+                                dico_cat_count[dict_anno["cat_id"][0]] = 1
+                            else:
+                                dico_cat_count[dict_anno["cat_id"][0]] = dico_cat_count[dict_anno["cat_id"][0]] + 1
 
-        json_img["police"] = police
-        json_img["nb_object"] = len(lst_anno_rework)
-        json_img["nb_object_distinct"] = get_object_distinct_count(lst_anno_rework)
-        json_img["nb_notes"] = get_note_count(lst_anno_rework)
-        json_img["highest_note"] = get_highest_note(lst_anno_rework)
-        json_img["lowest_note"] = get_lowest_note(lst_anno_rework)
-        json_img["keys"] = get_distinct_keys(lst_anno_rework, class_dico)
-        json_img["list_staff"] = get_staff_count(lst_anno_rework)
-        json_img["time_signature"] = get_time_signature(lst_anno_rework, class_dico)
-        json_img["page_number"] = img["filename"][-5]
-        json_img["annotations"] = lst_anno_rework
+                        dict_anno["o_bbox"] = a_bbox_to_o_bbox(dict_anno["a_bbox"])
+                        lst_anno_rework.append(dict_anno)
 
-        if i % 100 == 0:
-            print(i, " / ", len(images))
+                json_img = {}
+                json_img["id"] = img["id"]
+                json_img["filename"] = img["filename"]
+                json_img["width"] = img["width"]
+                json_img["height"] = img["height"]
 
-        #EXCEL
-        data_without_annot=json_img.copy()
-        del data_without_annot['annotations']
-        new_row = pd.DataFrame([data_without_annot])
-        df_info = pd.concat([df_info, new_row], ignore_index=True)
+                # Regular expression pattern to capture the word between 'aug-' and '-page'
+                pattern = r'aug-(.*?)-'
+                match = re.search(pattern, img["filename"])
+                if match:
+                    police = match.group(1)
+                else:
+                    police = "unknown"
 
-        with open(output_dir + json_img["filename"].replace(".png", ".json"), "w") as json_file:
-            json.dump(json_img, json_file, indent=4)  # indent=4 for pretty formatting
+                json_img["police"] = police
+                json_img["nb_object"] = len(lst_anno_rework)
+                json_img["nb_object_distinct"] = get_object_distinct_count(lst_anno_rework)
+                json_img["nb_notes"] = get_note_count(lst_anno_rework)
+                json_img["highest_note"] = get_highest_note(lst_anno_rework)
+                json_img["lowest_note"] = get_lowest_note(lst_anno_rework)
+                json_img["keys"] = get_distinct_keys(lst_anno_rework, class_dico)
+                json_img["list_staff"] = get_staff_count(lst_anno_rework)
+                json_img["time_signature"] = get_time_signature(lst_anno_rework, class_dico)
+                json_img["page_number"] = img["filename"][-5]
+                json_img["annotations"] = lst_anno_rework
+
+                if i % 100 == 0:
+                    print(i, " / ", len(images))
+
+                #EXCEL
+                data_without_annot=json_img.copy()
+                del data_without_annot['annotations']
+                new_row = pd.DataFrame([data_without_annot])
+                df_info = pd.concat([df_info, new_row], ignore_index=True)
+
+                with open(output_dir + json_img["filename"].replace(".png", ".json"), "w") as json_file:
+                    json.dump(json_img, json_file, indent=4)  # indent=4 for pretty formatting
 
     #Export to excel
-
     export_to_excel(df_info, output_dir + "/image_info.xlsx")
 
 if __name__ == "__main__":
