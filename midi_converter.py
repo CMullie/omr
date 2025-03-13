@@ -17,7 +17,6 @@ plus simple de gérer ça dans post-processing
 
 KeySignature = permet de définir la tonalité
 --> # dièses, qui peut également être négatif (si tonalité avec bémols)
-
 """
 
 import mido
