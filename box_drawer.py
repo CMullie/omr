@@ -399,19 +399,15 @@ def draw_yolo_boxes(anns_df, images_df, categories_df, output_image_dir, input_i
 def main():
 
     #SETUP
-    with open('raw_data/ds2_dense/deepscores_train.json', 'r') as file:
-        big_json = json.load(file)
-    file.close()
-
     with open('raw_data/new_classes.json', 'r') as file:
         categories_json = json.load(file)
     file.close()
 
-    output_dir = "raw_data/new_boxes_train"
+    output_dir = "raw_data/new_boxes_complete" #<- TO MODIFY
     json_folder = os.path.join(output_dir, "json")
     output_label_dir = os.path.join(output_dir, "labels")
     output_image_dir = os.path.join(output_dir, "images")
-    input_image_dir = "raw_data/ds2_dense/images"  # Modifier selon l'emplacement réel
+    input_image_dir = "raw_data/ds2_dense/images"  # <-TO MODIFY
 
     #CATEGORIES
     categories_df = convert_categories_to_df(categories_json)
