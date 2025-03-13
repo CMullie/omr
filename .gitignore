@@ -3,6 +3,8 @@ __pycache__/
 
 *.csv
 .env
+*.ipynb
+*.json
 .python-version
 # New files / folders
 .DS_Store
