@@ -1,236 +1,155 @@
 import os
-import numpy as np
-import pandas as pd
-import cv2
-import torch
 import yaml
-import time
-from datetime import datetime
-import gc
+import glob
+import argparse
+import subprocess
+import pandas as pd
+from pathlib import Path
 
-# my settings
-CONFIG = {
-    'output_dir': './output',
-    'models_dir': './models',
-    'train_images_dir': './images/train',
-    'val_images_dir': './images/val',
-    'train_labels_dir': './labels/train',
-    'val_labels_dir': './labels/val',
-    'img_size': 640,
-    'batch_size': 24,
-    'epochs': 100,
-    'pretrained_weights': 'yolov8n.pt',
-    'confidence_threshold': 0.25,
-    'iou_threshold': 0.35,
-    'class_mapping_path': './class_mapping.csv',
-}
+def make_yaml(csv_file, yaml_file, train_img, val_img):
+    # Read the CSV with classes
+    try:
+        classes = pd.read_csv(csv_file)
+    except Exception as e:
+        print(f"Error reading CSV: {e}")
+        return False
 
-os.makedirs('./output', exist_ok=True)
-os.makedirs('./models', exist_ok=True)
+    # Make sure we have the needed columns
+    if 'original_id' not in classes.columns or 'yolo_id' not in classes.columns:
+        print("CSV missing required columns")
+        return False
 
+    num_classes = len(classes)
 
-class SheetMusicDetector:
-    def __init__(self, config=None):
-        self.config = config or CONFIG
-        self.class_mapping = self.load_class_mapping(self.config['class_mapping_path'])
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print(f"Using device: {self.device}")
-        self.model = None
-        self.experiment_name = f"sheet_music_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Get class names
+    if 'class_name' in classes.columns:
+        classes = classes.sort_values(by='original_id')
+        class_names = []
+        for i, row in classes.iterrows():
+            class_names.append(row['class_name'])
+    else:
+        class_names = []
+        for i in range(num_classes):
+            class_names.append(f"class_{i}")
 
-    def load_class_mapping(self, csv_path):
-        df = pd.read_csv(csv_path)
-        print(f"Loaded {len(df)} classes")
-        original_id_mapping = dict(zip(df['original_id'], df['class_name']))
-        yolo_id_mapping = dict(zip(df['yolo_id'], df['class_name']))
-        return {'original_id': original_id_mapping, 'yolo_id': yolo_id_mapping}
+    # Get paths
+    current_dir = os.path.abspath(os.path.curdir)
 
-    def load_model(self, weights_path=None):
-        from ultralytics import YOLO
+    if not os.path.isabs(train_img):
+        train_path_full = os.path.join(current_dir, train_img)
+    else:
+        train_path_full = train_img
 
-        if weights_path and os.path.exists(weights_path):
-            self.model = YOLO(weights_path)
-            print(f"Model loaded from {weights_path}")
-        else:
-            self.model = YOLO(self.config['pretrained_weights'])
-            print(f"Using pre-trained model: {self.config['pretrained_weights']}")
+    if not os.path.isabs(val_img):
+        val_path_full = os.path.join(current_dir, val_img)
+    else:
+        val_path_full = val_img
 
-    def prepare_dataset(self):
-        train_img_dir = self.config['train_images_dir']
-        val_img_dir = self.config['val_images_dir']
-        train_label_dir = self.config['train_labels_dir']
-        val_label_dir = self.config['val_labels_dir']
+    train_labels_full = os.path.join(current_dir, "labels/train")
+    val_labels_full = os.path.join(current_dir, "labels/val")
 
-        train_images = len([f for f in os.listdir(train_img_dir)
-                          if f.lower().endswith(('.png'))])
-        val_images = len([f for f in os.listdir(val_img_dir)
-                        if f.lower().endswith(('.png'))])
-
-        train_labels = len([f for f in os.listdir(train_label_dir) if f.lower().endswith('.txt')])
-        val_labels = len([f for f in os.listdir(val_label_dir) if f.lower().endswith('.txt')])
-
-        print(f"Found {train_images} training images, {val_images} validation images")
-
-        yaml_path = './dataset.yaml'
-        self._create_yaml(yaml_path)
-
-        return yaml_path
-
-    def _create_yaml(self, yaml_path):
-        max_id = max(int(yolo_id) for yolo_id in self.class_mapping['yolo_id'].keys())
-
-        class_names = ['unknown'] * (max_id + 1)
-        for yolo_id, class_name in self.class_mapping['yolo_id'].items():
-            class_names[int(yolo_id)] = class_name
-
-        config = {
-            'path': './',
-            'train': 'images/train',
-            'val': 'images/val',
-            'names': {i: name for i, name in enumerate(class_names)},
-            'nc': len(class_names)
-        }
-
-        with open(yaml_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
-
-        return yaml_path
-
-    def train(self, yaml_path, weights_path=None):
-        from ultralytics import YOLO
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
-
-        if self.model is None:
-            self.load_model(weights_path or self.config['pretrained_weights'])
-
-        output_dir = os.path.join(self.config['models_dir'], self.experiment_name)
-        os.makedirs(output_dir, exist_ok=True)
-
-        try:
-            workers = min(8, os.cpu_count() or 1)
-
-            self.model.train(
-                data=yaml_path,
-                epochs=self.config['epochs'],
-                imgsz=self.config['img_size'],
-                batch=self.config['batch_size'],
-                name=self.experiment_name,
-                project=self.config['models_dir'],
-                patience=10,
-                device=self.device,
-                amp=True,
-                workers=workers,
-                save_period=10,
-                exist_ok=True,
-                pretrained=True,
-                optimizer="AdamW",
-                cos_lr=True
-            )
-
-            best_weights = os.path.join(self.config['models_dir'], self.experiment_name, 'weights', 'best.pt')
-
-            if os.path.exists(best_weights):
-                print(f"Model saved to {best_weights}")
-                return best_weights
-            else:
-                last_weights = os.path.join(self.config['models_dir'], self.experiment_name, 'weights', 'last.pt')
-                if os.path.exists(last_weights):
-                    print(f"Using last weights: {last_weights}")
-                    return last_weights
-                else:
-                    return None
-        except Exception as e:
-            print(f"Error: {e}")
-            return None
-
-
-def train_model():
-    log_file = open(f"log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", "w")
-    start_time = time.time()
-
-    def log(txt):
-        print(txt)
-        log_file.write(txt + "\n")
-        log_file.flush()
-
-    log("="*40)
-    log(f"Starting training: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    log("="*40)
+    # Create YAML content
+    yaml_data = {
+        'path': current_dir,
+        'train': train_path_full,
+        'val': val_path_full,
+        'train_labels': train_labels_full,
+        'val_labels': val_labels_full,
+        'nc': num_classes,
+        'names': class_names
+    }
 
     try:
-        # first training
-        log("\nPhase 1: First training (20 epochs)")
-
-        phase1_cfg = CONFIG.copy()
-        phase1_cfg['img_size'] = 640
-        phase1_cfg['batch_size'] = 16
-        phase1_cfg['epochs'] = 20
-
-        detector = SheetMusicDetector(phase1_cfg)
-        yaml_path = detector.prepare_dataset()
-
-        log("Training first model...")
-        weights1 = detector.train(yaml_path)
-
-        if not weights1:
-            log("Training failed, trying with smaller batch...")
-            phase1_cfg['batch_size'] = 8
-            detector = SheetMusicDetector(phase1_cfg)
-            weights1 = detector.train(yaml_path)
-
-        # second training
-        if weights1:
-            log("\nPhase 2: Second training (80 epochs)")
-
-            del detector
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-
-            phase2_cfg = CONFIG.copy()
-            phase2_cfg['img_size'] = 800
-            phase2_cfg['batch_size'] = 16
-            phase2_cfg['epochs'] = 80
-            phase2_cfg['pretrained_weights'] = weights1
-
-            detector = SheetMusicDetector(phase2_cfg)
-
-            log(f"Training second model...")
-            weights2 = detector.train(yaml_path)
-
-            if weights2:
-                log(f"Training successful! Model: {weights2}")
-
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                gcs_path = f"gs://omr_simple/models/sheet_music_model_{timestamp}.pt"
-                log(f"Copying to cloud: {gcs_path}")
-                os.system(f"gsutil cp {weights2} {gcs_path}")
-
-                return weights2
-            else:
-                log("Second training failed but we have the first model.")
-                return weights1
-        else:
-            log("Training failed completely.")
-            return None
-
+        with open(yaml_file, 'w') as f:
+            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
+        return True
     except Exception as e:
-        log(f"Error: {e}")
-        return None
-    finally:
-        total_mins = (time.time() - start_time) / 60
-        log(f"\nTraining took {total_mins:.1f} minutes ({total_mins/60:.1f} hours)")
-        log_file.close()
+        print(f"Error writing YAML: {e}")
+        return False
 
+def main():
+    parser = argparse.ArgumentParser(description='Train YOLOv5 model for OMR on GCP')
+    parser.add_argument('--img-size', type=int, default=1024, help='Image size')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
+    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='Initial weights')
+    parser.add_argument('--output-dir', type=str, default='./output', help='Output directory')
+    args = parser.parse_args()
+
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+
+    # Check GPU
+    has_gpu = subprocess.run('nvidia-smi', shell=True, capture_output=True).returncode == 0
+    device = 'cuda:0' if has_gpu else 'cpu'
+
+    # Clone YOLOv5 if needed
+    if not os.path.exists('yolov5'):
+        os.system('git clone https://github.com/ultralytics/yolov5.git')
+        os.system('pip install -r yolov5/requirements.txt')
+
+    csv_path = 'class_mapping.csv'
+    if not os.path.exists(csv_path):
+        print(f"Error: Can't find {csv_path}")
+        return
+
+    data_yaml_path = 'data.yaml'
+
+    # Count label files
+    train_files = glob.glob('labels/train/*.txt')
+    val_files = glob.glob('labels/val/*.txt')
+
+    # Make the YAML file
+    success = make_yaml(
+        csv_path,
+        data_yaml_path,
+        "./images/train",
+        "./images/val"
+    )
+
+    if not success:
+        print("Failed to create YAML file")
+        return
+
+    full_yaml_path = os.path.abspath(data_yaml_path)
+
+    # Training command
+    train_script = os.path.join('yolov5', 'train.py')
+    command = (
+        f"python3 {train_script} "
+        f"--img {args.img_size} "
+        f"--batch {args.batch_size} "
+        f"--epochs {args.epochs} "
+        f"--data {full_yaml_path} "
+        f"--weights {args.weights} "
+        f"--device {device} "
+        f"--name omr_model "
+        f"--exist-ok"
+    )
+
+    print(f"Running: {command}")
+
+    # Run training
+    os.system(command)
+
+    # Copy results
+    exp_folder = os.path.join('yolov5', 'runs', 'train')
+    if os.path.exists(exp_folder):
+        all_runs = os.listdir(exp_folder)
+        if all_runs:
+            latest_run = sorted(all_runs)[-1]
+            weights_folder = os.path.join(exp_folder, latest_run, 'weights')
+
+            if os.path.exists(weights_folder):
+                best_model = os.path.join(weights_folder, 'best.pt')
+                if os.path.exists(best_model):
+                    os.system(f"cp {best_model} {args.output_dir}/")
+
+                last_model = os.path.join(weights_folder, 'last.pt')
+                if os.path.exists(last_model):
+                    os.system(f"cp {last_model} {args.output_dir}/last.pt")
+
+    print("Training completed")
 
 if __name__ == "__main__":
-    print("Starting sheet music detector training...")
-    weights = train_model()
-
-    if weights:
-        print(f"Success! Model saved to: {weights}")
-    else:
-        print("Training failed.")
+    main()
