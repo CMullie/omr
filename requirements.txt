@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+python-multipart
+json
+pandas
+matplotlib
+PIL
+numpy
+shapely
+yaml
+glob
+argparse
+subprocess
+pathlib
+mido
