@@ -8,7 +8,7 @@ from PIL import Image
 import io
 import tempfile
 
-API_URL = os.environ.get("API_URL", "https://omr-api-service-510610499515.europe-west1.run.app")
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 st.set_page_config(
     page_title="Sheet Music to MIDI Converter",
@@ -88,7 +88,6 @@ def visualize_detections(detection_data):
             element_data = []
             for j, elem in enumerate(elements):
                 element_data.append({
-                    "Type": elem.get("type", "unknown").title(),
                     "Class": elem.get("class_name", "unknown"),
                     "Position": f"({elem.get('x', 0)}, {elem.get('y', 0)})",
                     "Confidence": f"{elem.get('confidence', 0):.2f}"
