@@ -17,10 +17,8 @@ def convert_categories_to_df(categories_json):
 # Convertir les images en DataFrame
 def convert_images_to_df(partition_json):
     filtered_data = {key: value for key, value in partition_json.items() if key != 'annotations'}
-    print(filtered_data)
     #image_df = pd.DataFrame.from_dict(filtered_data, orient='columns')
     image_df = pd.DataFrame([filtered_data])
-    print(image_df)
     #image_df.set_index("id", inplace=True)
     return image_df.head(1) #je comprends pas pq mais j'ai deux lignes identiques donc je garde la première
 
@@ -227,7 +225,7 @@ def save_yolo_annotations(anns_df, images_df, categories_df, output_label_dir, c
         if yolo_bbox is not None:
             # Séparons la hauteur originale du reste des coordonnées YOLO
             note_height = yolo_bbox[5]  # La hauteur originale en pixels
-            yolo_coords = yolo_bbox[:5]  # Les coordonnées YOLO standard
+            yolo_coords = yolo_bbox[:4]  # QUENTIN BEFORE WAS 5 Les coordonnées YOLO standard
 
             # Ajouter les informations à notre liste d'annotations
             image_annotations[img_id].append((yolo_class_id, yolo_coords, class_name, note_height))
@@ -399,21 +397,15 @@ def draw_yolo_boxes(anns_df, images_df, categories_df, output_image_dir, input_i
 def main():
 
     #SETUP
-    with open('raw_data/new_classes.json', 'r') as file:
+    with open('raw_data/categories.json', 'r') as file:
         categories_json = json.load(file)
     file.close()
 
-    output_dir = "raw_data/new_boxes_complete" #<- TO MODIFY
-    json_folder = os.path.join(output_dir, "json")
+    output_dir = "raw_data/ds2_complete/" #<- TO MODIFY
+    json_folder = os.path.join(output_dir, "small_jsons")
     output_label_dir = os.path.join(output_dir, "labels")
-    output_image_dir = os.path.join(output_dir, "images")
+    output_image_dir = os.path.join(output_dir, "boxes")
     input_image_dir = "raw_data/ds2_dense/images"  # <-TO MODIFY
-
-    #CATEGORIES
-    categories_df = convert_categories_to_df(categories_json)
-    class_map, class_names = create_class_mapping(categories_df)
-    print(class_map)
-    save_class_mapping(class_map, class_names, output_dir)
 
     #LOOP HERE
     i = 0
@@ -424,6 +416,11 @@ def main():
                 print("----------------------------------------")
                 print(i, " / ")
                 print("----------------------------------------")
+
+            #CATEGORIES
+            categories_df = convert_categories_to_df(categories_json)
+            class_map, class_names = create_class_mapping(categories_df)
+            save_class_mapping(class_map, class_names, output_dir)
 
             partition_json_file = os.path.join(json_folder, filename)
 
@@ -440,8 +437,7 @@ def main():
 
             print("\nSauvegarde des annotations YOLO avec les classes et hauteurs de notes...")
             save_yolo_annotations(anns_df, image_df, categories_df, output_label_dir, class_map, class_names)
-
-            draw_yolo_boxes(anns_df, image_df, categories_df, output_image_dir, input_image_dir, class_map, class_names)
+            #draw_yolo_boxes(anns_df, image_df, categories_df, output_image_dir, input_image_dir, class_map, class_names)
 
 
 if __name__ == "__main__":
