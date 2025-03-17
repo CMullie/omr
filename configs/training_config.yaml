@@ -1,0 +1,20 @@
+# what model to use
+model: "yolov5l"
+weights: "yolov5l.pt"
+img_size: 1024
+batch_size: 10
+epochs: 100
+
+# Data paths
+data_yaml: "data.yaml"
+train_path: "raw_data/images/train"
+val_path: "raw_data/images/val"
+train_labels: "raw_data/labels/train"
+val_labels: "raw_data/labels/val"
+class_mapping: "raw_data/class_mapping.csv"
+
+# Output settings
+output_dir: "output"
+
+# Hardware settings
+device: "cuda:0"

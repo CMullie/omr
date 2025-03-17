@@ -1,0 +1,13 @@
+# Model settings
+weights: "output/best.pt"
+img_size: 1024
+conf_threshold: 0.15
+
+# Data paths
+class_mapping: "raw_data/class_mapping.csv"
+
+# Output settings
+output_dir: "output/results"
+
+# Hardware settings
+device: "cuda:0"  
