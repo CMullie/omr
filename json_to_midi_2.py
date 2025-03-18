@@ -318,106 +318,118 @@ def create_midi(json_file, output_file):
         key_info = "aucune armure"
     print(f"Armure utilisée: {key_info}")
 
-    # Filtrer les notes
-    treble_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 0]
-    bass_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 1]
+    # Identifier toutes les portées présentes
+    all_staff_indices = set(n.get('attributed_staff', 0) for n in data if 'notehead' in n.get('class_name', ''))
+    print(f"Portées détectées: {sorted(all_staff_indices)}")
 
-    print(f"Trouvé {len(treble_notes)} notes à la main droite et {len(bass_notes)} notes à la main gauche")
+    # Organiser les notes par portée
+    notes_by_staff = {}
+    for n in data:
+        if 'notehead' in n.get('class_name', ''):
+            staff_idx = n.get('attributed_staff', 0)
+            if staff_idx not in notes_by_staff:
+                notes_by_staff[staff_idx] = []
+            notes_by_staff[staff_idx].append(n)
+
+    # Trier les portées
+    even_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 0])
+    odd_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 1])
+
+    print(f"Portées paires (main droite): {even_staffs}")
+    print(f"Portées impaires (main gauche): {odd_staffs}")
 
     # Créer la partition avec l'armure
     score = Score(tempo=79, key_signature=key_signature)  # tempo de 79 par défaut
 
     # Portée en clef de sol
-    if len(treble_notes) > 0:
-        treble_staff = Staff("treble")
-        treble_measure = Measure(start_time=0)
+    treble_staff = Staff("treble")
+    treble_measure = Measure(start_time=0)
+    current_time = 0.0
 
-        # Dico de notes triées par order_index pour traiter les accords correctement
-        treble_notes_by_order = {}
-        for note_data in treble_notes:
-            order_idx = note_data.get('order_index', 0)
-            if order_idx not in treble_notes_by_order:
-                treble_notes_by_order[order_idx] = []
-            treble_notes_by_order[order_idx].append(note_data)
+    # Traiter chaque portée paire séquentiellement
+    for staff_idx in even_staffs:
+        if staff_idx in notes_by_staff:
+            # Organiser les notes de cette portée par order_index
+            notes_by_order = {}
+            for note in notes_by_staff[staff_idx]:
+                order_idx = note.get('order_index', 0)
+                if order_idx not in notes_by_order:
+                    notes_by_order[order_idx] = []
+                notes_by_order[order_idx].append(note)
 
-        # Traiter chaque groupe de notes (accords ou notes individuelles)
-        current_time = 0.0
-        sorted_order = sorted(treble_notes_by_order.keys())
-        print(sorted_order)
-        print(treble_notes_by_order)
-        for i, order_idx in enumerate(sorted_order):
-            notes_group = treble_notes_by_order[order_idx]
-            # Toutes les notes d'un accord ont la même durée
-            duration_value = notes_group[0].get('attributed_duration', 4)
-            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
+            for order_idx in sorted(notes_by_order.keys()):
+                notes_group = notes_by_order[order_idx]
+                duration_value = notes_group[0].get('attributed_duration', 4)
+                duration = 4.0 / duration_value if duration_value > 0 else 1.0
 
-            # Ajouter chaque note de l'accord
-            for note_data in notes_group:
-                # Calculer la hauteur
-                clef_type = note_data.get('attributed_key', 'clefG')
-                relative_pos = note_data.get('relative_position', 0)
-                pitch = clef_position_to_midi(relative_pos, clef_type)
+                # Ajouter chaque note de l'accord
+                for note_data in notes_group:
+                    clef_type = note_data.get('attributed_key', 'clefG')
+                    relative_pos = note_data.get('relative_position', 0)
+                    pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                # Créer la note
-                note = Note(
-                    pitch=pitch,
-                    start_time=current_time,
-                    duration=duration,
-                    velocity=80
-                )
-                treble_measure.add_note(note)
+                    note = Note(
+                        pitch=pitch,
+                        start_time=current_time,
+                        duration=duration,
+                        velocity=80
+                    )
+                    treble_measure.add_note(note)
 
-            # Avancer dans le temps après traitement de l'accord
-            current_time += duration
+                # Avancer dans le temps après traitement de l'accord
+                current_time += duration
 
+    # Ajouter la mesure à la portée si des notes ont été ajoutées
+    if len(treble_measure.notes) > 0:
         treble_staff.add_measure(treble_measure)
         score.add_staff(treble_staff)
+        print(f"Ajouté {len(treble_measure.notes)} notes à la main droite")
 
     # Portée en clef de fa
-    if len(bass_notes) > 0:
-        bass_staff = Staff("bass")
-        bass_measure = Measure(start_time=0)
+    bass_staff = Staff("bass")
+    bass_measure = Measure(start_time=0)
+    current_time = 0.0
 
-        # Dico de notes triées par order_index pour traiter les accords correctement
-        bass_notes_by_order = {}
-        for note_data in bass_notes:
-            order_idx = note_data.get('order_index', 0)
-            if order_idx not in bass_notes_by_order:
-                bass_notes_by_order[order_idx] = []
-            bass_notes_by_order[order_idx].append(note_data)
+    # Traiter chaque portée impaire séquentiellement
+    for staff_idx in odd_staffs:
+        if staff_idx in notes_by_staff:
+            # Organiser les notes de cette portée par order_index
+            notes_by_order = {}
+            for note in notes_by_staff[staff_idx]:
+                order_idx = note.get('order_index', 0)
+                if order_idx not in notes_by_order:
+                    notes_by_order[order_idx] = []
+                notes_by_order[order_idx].append(note)
 
-        # Traiter chaque groupe de notes (accords ou notes individuelles)
-        current_time = 0.0
-        sorted_order = sorted(bass_notes_by_order.keys())
-        print(sorted_order)
-        print(bass_notes_by_order)
-        for i, order_idx in enumerate(sorted_order):
-            notes_group = bass_notes_by_order[order_idx]
-            # Toutes les notes d'un accord ont la même durée
-            duration_value = notes_group[0].get('attributed_duration', 4)
-            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
+            for order_idx in sorted(notes_by_order.keys()):
+                notes_group = notes_by_order[order_idx]
+                duration_value = notes_group[0].get('attributed_duration', 4)
+                duration = 4.0 / duration_value if duration_value > 0 else 1.0
 
-            # Ajouter chaque note de l'accord
-            for note_data in notes_group:
-                # Calculer la hauteur
-                clef_type = note_data.get('attributed_key', 'clefF')
-                relative_pos = note_data.get('relative_position', 0)
-                pitch = clef_position_to_midi(relative_pos, clef_type)
+                # Ajouter chaque note de l'accord
+                for note_data in notes_group:
+                    clef_type = note_data.get('attributed_key', 'clefF')
+                    relative_pos = note_data.get('relative_position', 0)
+                    pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                # Créer la note
-                note = Note(
-                    pitch=pitch,
-                    start_time=current_time,
-                    duration=duration,
-                    velocity=80
-                )
-                bass_measure.add_note(note)
+                    note = Note(
+                        pitch=pitch,
+                        start_time=current_time,
+                        duration=duration,
+                        velocity=80
+                    )
+                    bass_measure.add_note(note)
 
-            # Avancer dans le temps après traitement de l'accord
-            current_time += duration
+                # Avancer dans le temps après traitement de l'accord
+                current_time += duration
 
+    # Ajouter la mesure à la portée si des notes ont été ajoutées
+    if len(bass_measure.notes) > 0:
         bass_staff.add_measure(bass_measure)
         score.add_staff(bass_staff)
+        print(f"Ajouté {len(bass_measure.notes)} notes à la main gauche")
 
     # Convertir en MIDI
     print(f"Conversion en MIDI: {output_file}")
@@ -428,7 +440,7 @@ def create_midi(json_file, output_file):
 
 if __name__ == "__main__":
     json_file = "aphex_1.json"
-    output_file = "aphex_1.mid"
+    output_file = "aphex_1_new.mid"
 
     try:
         score = create_midi(json_file, output_file)
