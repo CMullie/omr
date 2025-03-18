@@ -3,14 +3,15 @@ import os
 from music_structure import Note, Measure, Staff, Score, TimeSignature, KeySignature
 from midi_converter import convert_score_to_midi
 
-def get_list_of_classes(detections, wanted_classes):
+def get_list_of_classes(detections, wanted_classes, confidence_threshold):
+
     list_output = []
 
     if type(wanted_classes) == str:
         wanted_classes = [wanted_classes]
 
     for elem in detections:
-        if elem["class_name"] in wanted_classes:
+        if elem["class_name"] in wanted_classes and elem["confidence"] >= confidence_threshold:
             list_output.append(elem)
 
     return list_output
@@ -40,13 +41,20 @@ def attribute_staffs_to_list(list_staff, list_objects, sort_by_staff=True):
     return list_objects
 
 def attribute_relative_position_to_a_note(note, list_staff):
+
     staff = list_staff[note["attributed_staff"]]
     average_staff_height = sum(obj["height"] for obj in list_staff) / len(list_staff)
-    interval_height = average_staff_height / 8
+    interval_height = average_staff_height/8
+    print(interval_height)
+    is_on_line = note["class_name"].endswith("OnLine")
 
     dict_distance_pos = {}
+    if is_on_line:
+        start = -20
+    else:
+        start = -19
 
-    for i in range(-20, 21):
+    for i in range(start, start + 41, 2):
         dict_distance_pos[i] = abs(staff["y_center"] + (-i * interval_height) - note["y_center"])
 
     closest_position = min(dict_distance_pos, key=dict_distance_pos.get)
@@ -54,7 +62,8 @@ def attribute_relative_position_to_a_note(note, list_staff):
 
     return note
 
-def attribute_relative_key_to_a_note(note, list_keys):
+def attribute_relative_key_to_a_note(note, list_keys, list_keys_signatures):
+
     list_keys_on_staff = []
     note_staff_index = note["attributed_staff"]
 
@@ -63,14 +72,31 @@ def attribute_relative_key_to_a_note(note, list_keys):
             list_keys_on_staff.append(elem)
 
     attributed_key = "unknown"
+    attributed_key_signature = "unknown"
     for elem in list_keys_on_staff:
         if elem["x_center"] < note["x_center"]:
             attributed_key = elem["class_name"]
 
+            signature_count = 0
+            for key_signature in list_keys_signatures:
+                if key_signature["attributed_staff"] == note_staff_index:
+                    is_signature_close_to_key = elem["x_center"] + (elem["width"] * 2) > key_signature["x_center"]
+
+                    if is_signature_close_to_key:
+                        signature_count += 1
+                        attributed_key_signature = key_signature["class_name"]
+
+
     note["attributed_key"] = attributed_key
+    if signature_count == 0:
+        note["attributed_key_signature"] = None
+    else:
+        note["attributed_key_signature"] = str(signature_count) + attributed_key_signature
+
     return note
 
-def attribute_duration_to_a_note(note, list_beams, list_flags):
+def attribute_duration_to_a_note(note, list_beams, list_flags, list_augmentation_dots):
+
     note_duration = -1
 
     if note["class_name"] in ["noteheadWholeOnLine", "noteheadWholeInSpace"]:
@@ -83,8 +109,10 @@ def attribute_duration_to_a_note(note, list_beams, list_flags):
     if note["class_name"] in ["noteheadBlackOnLine", "noteheadBlackInSpace"]:
         margin_x1 = note["x_center"] - (note["width"] * margin/2)
         margin_x2 = note["x_center"] + (note["width"] * margin/2)
+        #margin_y1 = note["y_center"] - (note["height"] * margin/2)
+        #margin_y2 = note["y_center"] + (note["height"] * margin/2)
 
-        # FLAGS
+        #FLAGS
         has_8th_flag = False
         for elem in list_flags:
             if elem["attributed_staff"] == note["attributed_staff"]:
@@ -98,7 +126,7 @@ def attribute_duration_to_a_note(note, list_beams, list_flags):
         if has_8th_flag:
             note_duration = 8
         else:
-            # BEAMS
+            #BEAMS
             count_beams = 0
             for elem in list_beams:
                 if elem["attributed_staff"] == note["attributed_staff"]:
@@ -110,18 +138,62 @@ def attribute_duration_to_a_note(note, list_beams, list_flags):
                         count_beams += 1
 
             if count_beams > 0:
-                note_duration = 2 ** (2 + count_beams)  # ONE BEAM = 1/8, TWO BEAMS = 1/16
+                note_duration = 2 ** (2 + count_beams) #ONE BEAM = 1/8, TWO BEAMS = 1/16
             else:
-                note_duration = 4  # JUST A BLACK
+                note_duration = 4 #JUST A BLACK
 
+        #AUGMENTATION DOT
+        for elem in list_augmentation_dots:
+            dot_is_on_same_line = abs(elem["y_center"] - note["y_center"]) < note["height"]
+            dot_is_close = abs(elem["x_center"] - note["x_center"]) < (note["width"] * 3)
+
+            if dot_is_on_same_line and dot_is_close:
+                note_duration = note_duration / 1.5
+                break
+
+    #print("beams : ", count_beams, "has_flag : ", has_8th_flag)
     note["attributed_duration"] = note_duration
     return note
 
-def attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags):
+def attribute_duration_to_rests(list_rests):
+
+    dict_duration = {"restDoubleWhole": 0,
+            "restWhole": 1,
+            "restHalf": 2,
+            "restQuarter": 4,
+            "rest8th": 8,
+            "rest16th": 16,
+            "rest32nd": 32,
+            "rest64th": 64,
+            "rest128th": 128}
+
+    for i in range(len(list_rests)):
+        list_rests[i]["attributed_duration"] = dict_duration[list_rests[i]["class_name"]]
+
+    return list_rests
+
+def attribute_accidentals_to_a_note(note, list_accidentals):
+
+    note["attributed_accidentals"] = None
+
+    for elem in list_accidentals:
+        accidental_is_on_same_line = abs(elem["y_center"] - note["y_center"]) < (note["height"] * 2)
+        print(elem["x_center"] < note["x_center"])
+        accidental_is_close_left = (elem["x_center"] < note["x_center"]) and abs(elem["x_center"] - note["x_center"]) < (note["width"] * 3)
+
+        if accidental_is_on_same_line and accidental_is_close_left:
+            note["attributed_accidentals"] = elem["class_name"]
+            break
+
+    return note
+
+def attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags, list_accidentals, list_keys_signatures, list_augmentation_dots):
+
     for i in range(len(list_notes)):
         list_notes[i] = attribute_relative_position_to_a_note(list_notes[i], list_staff)
-        list_notes[i] = attribute_relative_key_to_a_note(list_notes[i], list_keys)
-        list_notes[i] = attribute_duration_to_a_note(list_notes[i], list_beams, list_flags)
+        list_notes[i] = attribute_accidentals_to_a_note(list_notes[i], list_accidentals)
+        list_notes[i] = attribute_relative_key_to_a_note(list_notes[i], list_keys, list_keys_signatures)
+        list_notes[i] = attribute_duration_to_a_note(list_notes[i], list_beams, list_flags, list_augmentation_dots)
 
     return list_notes
 
@@ -241,39 +313,45 @@ def create_midi(json_file, output_file):
             # Vérifier si c'est déjà un fichier traité
             data = json.load(f)
             detections = data
-            list_staff = get_list_of_classes(detections, "staff")
+
+            list_staff = get_list_of_classes(detections, "staff", 0.6)
             list_staff = sorted(list_staff, key=lambda x: x['y1'])
 
             notes_labels = ["noteheadBlackInSpace", "noteheadBlackOnLine", "noteheadHalfInSpace", "noteheadHalfOnLine"]
-            list_notes = get_list_of_classes(detections, notes_labels)
-            list_notes = [obj for obj in list_notes if obj['confidence'] >= 0.6]
+            list_notes = get_list_of_classes(detections, notes_labels, 0.6)
 
-            rests_labels = ["restWhole", "restQuarter", "rest8th"]
-            list_rests = get_list_of_classes(detections, rests_labels)
-            list_rests = [obj for obj in list_rests if obj['confidence'] >= 0.6]
+            rests_labels = ["restWhole", "restHalf", "restQuarter", "rest8th", "rest16th", "rest32nd", "rest64th", "rest128th"]
+            list_rests = get_list_of_classes(detections, rests_labels, 0.6)
 
             keys_labels = ["clefF", "clefG"]
-            list_keys = get_list_of_classes(detections, keys_labels)
+            list_keys = get_list_of_classes(detections, keys_labels, 0.6)
 
-            keys_signatures_labels = ["keyFlat", "keySharp"]
-            list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels)
-            list_keys_signatures = [obj for obj in list_keys_signatures if obj['confidence'] >= 0.5]
+            list_augmentation_dots = get_list_of_classes(detections, "augmentationDot", 0.03)
 
-            list_beams = get_list_of_classes(detections, "beam")
-            list_beams = [obj for obj in list_beams if obj['confidence'] >= 0.6]
+            keys_signatures_labels = ["keyFlat", "keySharp", "keyNatural"]
+            list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels, 0.6)
 
-            list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"])
+            accidentals_labels = ["accidentalFlat", "accidentalSharp", "accidentalNatural"]
+            list_accidentals = get_list_of_classes(detections, accidentals_labels, 0.40)
+
+            list_beams = get_list_of_classes(detections, "beam", 0.6)
+            list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"], 0.6)
 
             # Attribuer les portées aux objets
             list_notes = attribute_staffs_to_list(list_staff, list_notes)
             list_rests = attribute_staffs_to_list(list_staff, list_rests)
+            list_augmentation_dots = attribute_staffs_to_list(list_staff, list_augmentation_dots)
             list_keys = attribute_staffs_to_list(list_staff, list_keys)
             list_keys_signatures = attribute_staffs_to_list(list_staff, list_keys_signatures)
+            list_accidentals = attribute_staffs_to_list(list_staff, list_accidentals)
             list_beams = attribute_staffs_to_list(list_staff, list_beams)
             list_flags = attribute_staffs_to_list(list_staff, list_flags)
 
             # Attribuer des caractéristiques aux notes
-            list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags)
+            list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags, list_accidentals, list_keys_signatures, list_augmentation_dots)
+
+            # Attribuer une duration aux silences
+            list_rests = attribute_duration_to_rests(list_rests)
 
             # Fusionner les notes et les silences
             list_musical_objects = list_notes + list_rests
@@ -427,8 +505,8 @@ def create_midi(json_file, output_file):
     return score
 
 if __name__ == "__main__":
-    json_file = "aphex_accords.json"
-    output_file = "aphex_accords.mid"
+    json_file = "raw_data/response_aphex_2_percent.json"
+    output_file = "raw_data/v2_response_aphex_2_percent.mid"
 
     try:
         score = create_midi(json_file, output_file)
