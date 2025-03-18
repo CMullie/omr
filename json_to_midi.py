@@ -240,59 +240,51 @@ def create_midi(json_file, output_file):
         with open(json_file, 'r') as f:
             # Vérifier si c'est déjà un fichier traité
             data = json.load(f)
-            if not all(key in data[0] for key in ['attributed_staff', 'relative_position', 'attributed_key', 'attributed_duration']):
-                print("Fichier de détection brut détecté, traitement en cours...")
-                detections = data
-                list_staff = get_list_of_classes(detections, "staff")
-                list_staff = sorted(list_staff, key=lambda x: x['y1'])
+            detections = data
+            list_staff = get_list_of_classes(detections, "staff")
+            list_staff = sorted(list_staff, key=lambda x: x['y1'])
 
-                notes_labels = ["noteheadBlackInSpace", "noteheadBlackOnLine", "noteheadHalfInSpace", "noteheadHalfOnLine"]
-                list_notes = get_list_of_classes(detections, notes_labels)
-                list_notes = [obj for obj in list_notes if obj['confidence'] >= 0.6]
+            notes_labels = ["noteheadBlackInSpace", "noteheadBlackOnLine", "noteheadHalfInSpace", "noteheadHalfOnLine"]
+            list_notes = get_list_of_classes(detections, notes_labels)
+            list_notes = [obj for obj in list_notes if obj['confidence'] >= 0.6]
 
-                rests_labels = ["restWhole", "restQuarter", "rest8th"]
-                list_rests = get_list_of_classes(detections, rests_labels)
-                list_rests = [obj for obj in list_rests if obj['confidence'] >= 0.6]
+            rests_labels = ["restWhole", "restQuarter", "rest8th"]
+            list_rests = get_list_of_classes(detections, rests_labels)
+            list_rests = [obj for obj in list_rests if obj['confidence'] >= 0.6]
 
-                keys_labels = ["clefF", "clefG"]
-                list_keys = get_list_of_classes(detections, keys_labels)
+            keys_labels = ["clefF", "clefG"]
+            list_keys = get_list_of_classes(detections, keys_labels)
 
-                keys_signatures_labels = ["keyFlat", "keySharp"]
-                list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels)
-                list_keys_signatures = [obj for obj in list_keys_signatures if obj['confidence'] >= 0.5]
+            keys_signatures_labels = ["keyFlat", "keySharp"]
+            list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels)
+            list_keys_signatures = [obj for obj in list_keys_signatures if obj['confidence'] >= 0.5]
 
-                list_beams = get_list_of_classes(detections, "beam")
-                list_beams = [obj for obj in list_beams if obj['confidence'] >= 0.6]
+            list_beams = get_list_of_classes(detections, "beam")
+            list_beams = [obj for obj in list_beams if obj['confidence'] >= 0.6]
 
-                list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"])
+            list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"])
 
-                # Attribuer les portées aux objets
-                list_notes = attribute_staffs_to_list(list_staff, list_notes)
-                list_rests = attribute_staffs_to_list(list_staff, list_rests)
-                list_keys = attribute_staffs_to_list(list_staff, list_keys)
-                list_keys_signatures = attribute_staffs_to_list(list_staff, list_keys_signatures)
-                list_beams = attribute_staffs_to_list(list_staff, list_beams)
-                list_flags = attribute_staffs_to_list(list_staff, list_flags)
+            # Attribuer les portées aux objets
+            list_notes = attribute_staffs_to_list(list_staff, list_notes)
+            list_rests = attribute_staffs_to_list(list_staff, list_rests)
+            list_keys = attribute_staffs_to_list(list_staff, list_keys)
+            list_keys_signatures = attribute_staffs_to_list(list_staff, list_keys_signatures)
+            list_beams = attribute_staffs_to_list(list_staff, list_beams)
+            list_flags = attribute_staffs_to_list(list_staff, list_flags)
 
-                # Attribuer des caractéristiques aux notes
-                list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags)
+            # Attribuer des caractéristiques aux notes
+            list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags)
 
-                # Fusionner les notes et les silences
-                list_musical_objects = list_notes + list_rests
+            # Fusionner les notes et les silences
+            list_musical_objects = list_notes + list_rests
 
-                # Attribuer l'ordre des objets
-                data = attribute_order_index(list_musical_objects)
+            # Attribuer l'ordre des objets
+            data = attribute_order_index(list_musical_objects)
 
-                # Compter les altérations par portée
-                key_counts = count_key_signatures(list_keys_signatures)
+            # Compter les altérations par portée
+            key_counts = count_key_signatures(list_keys_signatures)
 
-                print(f"Altérations détectées {key_counts[0]}")
-            else:
-                # Si les données sont déjà traitées, on vérifie si on a des informations sur les armures
-                key_counts = {}
-
-
-                print(f"Traitement terminé: {len(data)} objets musicaux préparés.")
+            print(f"Altérations détectées {key_counts[0]}")
     except Exception as e:
         print(f"Erreur lors du chargement ou du traitement du fichier: {e}")
         raise
@@ -327,10 +319,10 @@ def create_midi(json_file, output_file):
     print(f"Armure utilisée: {key_info}")
 
     # Filtrer les notes
-    treble_notes = [n for n in data if 'notehead' in n.get('class_name', '') and n.get('attributed_key') == 'clefG']
-    bass_notes = [n for n in data if 'notehead' in n.get('class_name', '') and n.get('attributed_key') == 'clefF']
+    treble_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 0]
+    bass_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 1]
 
-    print(f"Trouvé {len(treble_notes)} notes en clef de sol et {len(bass_notes)} notes en clef de fa")
+    print(f"Trouvé {len(treble_notes)} notes à la main droite et {len(bass_notes)} notes à la main gauche")
 
     # Créer la partition avec l'armure
     score = Score(tempo=79, key_signature=key_signature)  # tempo de 79 par défaut
@@ -344,7 +336,10 @@ def create_midi(json_file, output_file):
         duration = 0
         pos = 0
         for i, note_data in enumerate(treble_notes):
-            current_time += duration if note_data.get('order_index', 0) != pos else 0
+            if note_data.get('order_index', 0) != pos:
+                current_time += duration
+            else:
+                current_time += 0
             # Calculer la hauteur
             clef_type = note_data.get('attributed_key', 'clefG')
             relative_pos = note_data.get('relative_position', 0)
@@ -374,7 +369,10 @@ def create_midi(json_file, output_file):
         duration = 0
         pos = 0
         for i, note_data in enumerate(bass_notes):
-            current_time += duration if note_data.get('order_index', 0) != pos else 0
+            if note_data.get('order_index', 0) != pos:
+                current_time += duration
+            else:
+                current_time += 0
             # Calculer la hauteur
             clef_type = note_data.get('attributed_key', 'clefF')
             relative_pos = note_data.get('relative_position', 0)
@@ -403,7 +401,7 @@ def create_midi(json_file, output_file):
     return score
 
 if __name__ == "__main__":
-    json_file = "response_1703.json"
+    json_file = "response1803.json"
     output_file = "super_midi.mid"
 
     try:
