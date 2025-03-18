@@ -45,7 +45,6 @@ def attribute_relative_position_to_a_note(note, list_staff):
     staff = list_staff[note["attributed_staff"]]
     average_staff_height = sum(obj["height"] for obj in list_staff) / len(list_staff)
     interval_height = average_staff_height/8
-    print(interval_height)
     is_on_line = note["class_name"].endswith("OnLine")
 
     dict_distance_pos = {}
@@ -179,7 +178,6 @@ def attribute_accidentals_to_a_note(note, list_accidentals):
 
     for elem in list_accidentals:
         accidental_is_on_same_line = abs(elem["y_center"] - note["y_center"]) < (note["height"] * 2)
-        print(elem["x_center"] < note["x_center"])
         accidental_is_close_left = (elem["x_center"] < note["x_center"]) and abs(elem["x_center"] - note["x_center"]) < (note["width"] * 3)
 
         if accidental_is_on_same_line and accidental_is_close_left:
@@ -307,7 +305,7 @@ def count_key_signatures(list_keys_signatures):
 
     return staff_key_counts
 
-def create_midi(json_file, output_file):
+def create_midi(json_file, output_file, tempo=79):
     print(f"Lecture du fichier {json_file}")
     try:
         with open(json_file, 'r') as f:
@@ -362,8 +360,6 @@ def create_midi(json_file, output_file):
 
             # Compter les altérations par portée
             key_counts = count_key_signatures(list_keys_signatures)
-
-            print(f"Altérations détectées {key_counts[0]}")
     except Exception as e:
         print(f"Erreur lors du chargement ou du traitement du fichier: {e}")
         raise
@@ -379,7 +375,7 @@ def create_midi(json_file, output_file):
         sharps = key_counts[0].get('keySharp', 0)
 
     if flats > 0 and sharps > 0:
-        print(f"Attention: {flats} bémols et {sharps} dièses détectés. Utilisation des plus nombreux.")
+        # print(f"Attention: {flats} bémols et {sharps} dièses détectés. Utilisation des plus nombreux.")
         if flats >= sharps:
             sharps = 0
         else:
@@ -395,7 +391,7 @@ def create_midi(json_file, output_file):
         key_info = f"{flats} bémol(s)"
     else:
         key_info = "aucune armure"
-    print(f"Armure utilisée: {key_info}")
+    # print(f"Armure utilisée: {key_info}")
 
     # Filtrer les objets musicaux par portée
     treble_objects = [obj for obj in data if (int(obj.get('attributed_staff', 0)) % 2) == 0]
@@ -405,7 +401,7 @@ def create_midi(json_file, output_file):
     print(f"Trouvé {len([obj for obj in bass_objects if 'notehead' in obj.get('class_name', '')])} notes et {len([obj for obj in bass_objects if obj.get('class_name', '').startswith('rest')])} silences à la main gauche")
 
     # Créer la partition avec l'armure
-    score = Score(tempo=79, key_signature=key_signature)  # tempo de 79 par défaut
+    score = Score(tempo=tempo, key_signature=key_signature)  # tempo de 79 par défaut
 
     # Portée en clef de sol
     if treble_objects:
