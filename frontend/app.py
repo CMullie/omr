@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get API URL with more robust fallback
-API_URL = os.environ.get("API_URL", "https://omr-api-service-510610499515.europe-west1.run.app")
+API_URL = os.environ.get("API_URL", "http://localhost:8000/")
 logger.info(f"Using API URL: {API_URL}")
 
 st.set_page_config(
@@ -128,6 +128,18 @@ def poll_job_status(job_id):
 
 def visualize_detections(detection_data):
     try:
+        # If detection_data is a list (raw format from API), convert it to expected dictionary format
+        if isinstance(detection_data, list):
+            # Simple conversion from list to expected dictionary structure
+            structured_data = {
+                "staves": [{
+                    "type": "Staff",
+                    "elements": detection_data
+                }]
+            }
+            detection_data = structured_data
+
+        # Continue with original code
         staves = detection_data.get("staves", [])
 
         if "visualization_image" in st.session_state and st.session_state.visualization_image:
@@ -144,7 +156,7 @@ def visualize_detections(detection_data):
                 for j, elem in enumerate(elements):
                     element_data.append({
                         "Class": elem.get("class_name", "unknown"),
-                        "Position": f"({elem.get('x', 0)}, {elem.get('y', 0)})",
+                        "Position": f"({elem.get('x_center', elem.get('x', 0)):.1f}, {elem.get('y_center', elem.get('y', 0)):.1f})",
                         "Confidence": f"{elem.get('confidence', 0):.2f}"
                     })
 

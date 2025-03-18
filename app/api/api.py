@@ -19,10 +19,11 @@ sys.path.append(str(PROJECT_ROOT / "src"))
 # Import functions - try both import paths
 try:
     from src.inference.predict import load_model, load_class_mapping, run_inference
-    from src.midi_converter import convert_detections_to_midi
+    from json_to_midi import create_midi
 except ImportError:
     from inference.predict import load_model, load_class_mapping, run_inference
-    from midi_converter import convert_detections_to_midi
+    from json_to_midi import create_midi
+
 
 # Set up paths
 MODEL_PATH = os.path.join(PROJECT_ROOT, "output", "models", "best.pt")
@@ -137,8 +138,8 @@ def process_sheet_music(image_path, job_id):
             JOBS[job_id]["error"] = "Model not loaded"
             return
 
-        # Run detection
-        detection_path = os.path.join(job_dir, f"{job_id}_detection.json")
+        # Run detection using the same format as /detect-json endpoint
+        # This is key - use the same code that /detect-json uses
         detections, _ = run_inference(model, image_path, conf_threshold=0.1, class_mapping=class_mapping)
 
         if not detections:
@@ -146,27 +147,31 @@ def process_sheet_music(image_path, job_id):
             JOBS[job_id]["error"] = "No music notation detected"
             return
 
-        # Simple structure for output
-        detection_result = {
-            "metadata": {"image": os.path.basename(image_path)},
-            "staves": [{"elements": detections}]
-        }
+        print(f"Found {len(detections)} music symbols")
 
-        # Save detection results
+        # Save detection results in same format as /detect-json
+        detection_path = os.path.join(job_dir, f"{job_id}_detection.json")
         with open(detection_path, 'w') as f:
-            json.dump(detection_result, f, indent=2)
+            json.dump(detections, f, indent=2)  # Save as plain list, no metadata wrapping
 
         # Create visualization
         vis_path = os.path.join(job_dir, f"{job_id}_visualization.png")
         visualize_detection_with_labels(image_path, detections, vis_path)
 
-        # Convert to MIDI
+        # Convert to MIDI using json_to_midi.py
         midi_path = os.path.join(job_dir, f"{job_id}.mid")
-        midi_file = convert_detections_to_midi(detection_path, midi_path)
+        try:
+            # Call create_midi with the detection file
+            from json_to_midi import create_midi
+            score = create_midi(detection_path, midi_path)
 
-        if not midi_file:
+            if not os.path.exists(midi_path):
+                JOBS[job_id]["status"] = "failed"
+                JOBS[job_id]["error"] = "MIDI file was not created"
+                return
+        except Exception as e:
             JOBS[job_id]["status"] = "failed"
-            JOBS[job_id]["error"] = "MIDI conversion failed"
+            JOBS[job_id]["error"] = f"MIDI conversion error: {str(e)}"
             return
 
         # Update job status
@@ -240,7 +245,7 @@ async def detect_json(file: UploadFile = File(...)):
             temp_file.write(content)
 
         # Run detection
-        detections, _ = run_inference(model, temp_file_path, conf_threshold=0.1, class_mapping=class_mapping)
+        detections, _ = run_inference(model, temp_file_path, conf_threshold=0.02, class_mapping=class_mapping)
 
         if not detections:
             return JSONResponse(content={"message": "No music notation detected", "detections": []})
