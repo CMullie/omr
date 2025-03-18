@@ -1,27 +1,5 @@
-"""
-Conversion d'une représentation musicale structurée en MIDI.
-Code nécessite music_structure.py [à faire, mais dépendra bcp du résultat du YOLO]
-
-Score = classe la plus importante dans music_structure, correspond à la partition
---> tempo, # portées, global_TimeSignature, KeySignature
-Faudra aussi créer classes portées et mesures pour pouvoir mettre les notes dans les mesures
---> portée : liste des mesures
---> mesure : time de lancement de la mesure + liste des notes + TimeSignature individuelle au besoin
-
-Note = classe qui correspond à chaque note individuelle
---> hauteur, time, durée, vélocité MIDI (mettre un truc standard), accentuation
-
-TimeSignature = permet de définir la métrique
-plus simple de gérer ça dans post-processing
---> numérateur, dénominateur
-
-KeySignature = permet de définir la tonalité
---> # dièses, qui peut également être négatif (si tonalité avec bémols)
-"""
-
 import mido
 
-# MUSIC_STRUCTURE A FAIRE
 from music_structure import Score, Note, TimeSignature, KeySignature
 
 class AccidentalHandler:
@@ -150,51 +128,87 @@ class MIDIConverter:
 
             accidental_handler = AccidentalHandler(score.key_signature)
 
-            # Ajout de toutes les notes
+            # Traitement des mesures
             for measure in staff.measures:
-                # Accentuations remises à 0
+                # Réinitialiser les altérations au début de chaque mesure
                 accidental_handler.reset_measure()
 
-                # Tri des notes
-                sorted_notes = sorted(measure.notes, key=lambda n: n.start_time)
+                # Organiser les notes par temps (pour gérer les accords)
+                notes_by_time = {}
+                for note in measure.notes:
+                    start_time = note.start_time
+                    if start_time not in notes_by_time:
+                        notes_by_time[start_time] = []
+                    notes_by_time[start_time].append(note)
 
-                # Conversion en MIDI
-                last_time = measure.start_time
-                for note in sorted_notes:
-                    # Application dieses / bemols
-                    adjusted_pitch = accidental_handler.apply_accidentals(note)
+                # Trier les temps de début pour traiter les notes dans l'ordre chronologique
+                sorted_start_times = sorted(notes_by_time.keys())
 
-                    # Evenement Note on
-                    delta_time = self.beats_to_ticks(note.start_time - last_time) if \
-                        self.beats_to_ticks(note.start_time - last_time) >= 0 else 0
-                    track.append(mido.Message(
-                        'note_on',
-                        note=adjusted_pitch,
-                        velocity=note.velocity,
-                        time=delta_time
-                    ))
+                # Variable pour suivre la position temporelle actuelle dans le flux MIDI
+                current_time = measure.start_time
+                last_end_time = measure.start_time
 
-                    # Update de last time
-                    last_time = note.start_time # peut potentiellement être supprimé
+                # Traiter chaque groupe de notes (accords ou notes individuelles)
+                for start_time in sorted_start_times:
+                    # Calculer le delta temps depuis la dernière action
+                    delta_time = self.beats_to_ticks(start_time - current_time)
+                    current_time = start_time
 
-                    # Evenement Note off
-                    delta_time = self.beats_to_ticks(note.duration)
-                    track.append(mido.Message(
-                        'note_off',
-                        note=adjusted_pitch,
-                        velocity=0,
-                        time=delta_time
-                    ))
+                    # Groupe de notes commençant au même moment (accord)
+                    chord_notes = notes_by_time[start_time]
 
-                    # Update de last time
-                    last_time = note.start_time + note.duration
+                    # Ajouter tous les événements note_on de l'accord
+                    for idx, note in enumerate(chord_notes):
+                        # Appliquer les altérations
+                        adjusted_pitch = accidental_handler.apply_accidentals(note)
 
-        # Sauvegarde du fichier
+                        # Pour la première note, utiliser le delta_time calculé
+                        if idx == 0:
+                            track.append(mido.Message(
+                                'note_on',
+                                note=adjusted_pitch,
+                                velocity=note.velocity,
+                                time=delta_time
+                            ))
+                        else:
+                            # Pour les autres notes de l'accord, le delta_time est 0
+                            track.append(mido.Message(
+                                'note_on',
+                                note=adjusted_pitch,
+                                velocity=note.velocity,
+                                time=0
+                            ))
+
+                    # Déterminer le temps de fin pour ce groupe (toutes les notes d'un accord ont la même durée)
+                    end_time = start_time + chord_notes[0].duration
+
+                    # Mettre à jour pour suivre la fin de l'accord
+                    if end_time > last_end_time:
+                        last_end_time = end_time
+
+                    # Calculer le delta_time pour les événements note_off
+                    note_duration_ticks = self.beats_to_ticks(chord_notes[0].duration)
+
+                    # Ajouter tous les événements note_off de l'accord
+                    for idx, note in enumerate(chord_notes):
+                        adjusted_pitch = accidental_handler.apply_accidentals(note)
+
+                        # Pour le dernier note_off, mettre à jour current_time
+                        if idx == len(chord_notes) - 1:
+                            current_time = end_time
+
+                        track.append(mido.Message(
+                            'note_off',
+                            note=adjusted_pitch,
+                            velocity=0,
+                            time=note_duration_ticks if idx == 0 else 0  # Delta time seulement pour la première note
+                        ))
+
+        # Sauvegarder le fichier MIDI si un chemin est fourni
         if output_path:
             midi.save(output_path)
 
         return midi
-
 
 def convert_score_to_midi(score: Score, output_path: str):
     """ Convertisseur MIDI qui permet de créer une classe convertisseur puis de créer un MIDI"""
