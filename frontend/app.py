@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get API URL with more robust fallback
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+API_URL = os.environ.get("API_URL", "https://omr-api-service-510610499515.europe-west1.run.app")
 logger.info(f"Using API URL: {API_URL}")
 
 st.set_page_config(
