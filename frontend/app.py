@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Get API URL with more robust fallback
-API_URL = os.environ.get("API_URL", "https://omr-api-service-510610499515.europe-west1.run.app")
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 logger.info(f"Using API URL: {API_URL}")
 
 st.set_page_config(
@@ -28,7 +28,7 @@ def create_download_link(content, filename, link_text):
     href = f'<a href="data:audio/midi;base64,{b64}" download="{filename}">{link_text}</a>'
     return href
 
-def process_sheet_music(file):
+def process_sheet_music(file, tempo=79):
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
             temp_file.write(file.getvalue())
@@ -56,8 +56,9 @@ def process_sheet_music(file):
         # Process request
         try:
             files = {"file": (file.name, open(temp_file_path, "rb"), "image/png")}
-            logger.info("Sending process request to API")
-            response = requests.post(f"{API_URL}/process", files=files)
+            logger.info(f"Sending process request to API with tempo {tempo}")
+            # Add tempo as a parameter
+            response = requests.post(f"{API_URL}/process?tempo={tempo}", files=files)
 
             if response.status_code != 200:
                 logger.error(f"API request failed: {response.status_code}")
@@ -237,6 +238,15 @@ if uploaded_file is not None:
         logger.error(f"Error opening uploaded image: {str(e)}")
         st.error(f"Error opening image: {str(e)}")
 
+    # Add this tempo slider before the Convert button
+    selected_tempo = st.slider(
+        "Select Tempo (BPM)",
+        min_value=40,
+        max_value=200,
+        value=79,  # Default matches the hardcoded value
+        step=1
+    )
+
     if st.button("Convert to MIDI"):
         with st.spinner("Processing your sheet music..."):
             progress_bar = st.progress(0.2)
@@ -244,7 +254,8 @@ if uploaded_file is not None:
             status_text.text("Status: Uploading image...")
 
             try:
-                job_response = process_sheet_music(uploaded_file)
+                job_response = process_sheet_music(uploaded_file, tempo=selected_tempo)
+
 
                 if job_response:
                     job_id = job_response.get("job_id")

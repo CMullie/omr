@@ -139,7 +139,6 @@ def process_sheet_music(image_path, job_id):
             return
 
         # Run detection using the same format as /detect-json endpoint
-        # This is key - use the same code that /detect-json uses
         detections, _ = run_inference(model, image_path, conf_threshold=0.1, class_mapping=class_mapping)
 
         if not detections:
@@ -158,12 +157,16 @@ def process_sheet_music(image_path, job_id):
         vis_path = os.path.join(job_dir, f"{job_id}_visualization.png")
         visualize_detection_with_labels(image_path, detections, vis_path)
 
-        # Convert to MIDI using json_to_midi.py
+        # Convert to MIDI using json_to_midi.py with specified tempo
         midi_path = os.path.join(job_dir, f"{job_id}.mid")
         try:
-            # Call create_midi with the detection file
+            # Get tempo from job data
+            tempo = JOBS[job_id].get("tempo", 79)
+            print(f"Using tempo: {tempo} BPM")
+
+            # Call create_midi with the detection file and tempo
             from json_to_midi import create_midi
-            score = create_midi(detection_path, midi_path)
+            score = create_midi(detection_path, midi_path, tempo=tempo)
 
             if not os.path.exists(midi_path):
                 JOBS[job_id]["status"] = "failed"
@@ -179,6 +182,7 @@ def process_sheet_music(image_path, job_id):
         JOBS[job_id]["detection_file"] = detection_path
         JOBS[job_id]["visualization_file"] = vis_path
         JOBS[job_id]["midi_file"] = midi_path
+        JOBS[job_id]["tempo"] = tempo  # Store the tempo in the finished job
 
         # Count elements
         element_count = len(detections)
@@ -260,7 +264,11 @@ async def detect_json(file: UploadFile = File(...)):
             os.remove(temp_file_path)
 
 @app.post("/process")
-async def process_sheet(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def process_sheet(
+    file: UploadFile = File(...),
+    tempo: int = 79,  # Add this parameter with default value
+    background_tasks: BackgroundTasks = None
+):
     # Generate job ID
     job_id = str(uuid.uuid4())
 
@@ -273,11 +281,12 @@ async def process_sheet(file: UploadFile = File(...), background_tasks: Backgrou
     with open(image_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Initialize job status
+    # Initialize job status with tempo
     JOBS[job_id] = {
         "status": "queued",
         "image_path": image_path,
-        "filename": file.filename
+        "filename": file.filename,
+        "tempo": tempo  # Store the selected tempo
     }
 
     # Process in background or synchronously
