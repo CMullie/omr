@@ -24,7 +24,6 @@ import mido
 # MUSIC_STRUCTURE A FAIRE
 from music_structure import Score, Note, TimeSignature, KeySignature
 
-
 class AccidentalHandler:
     """
     Gestion des accentuations : dieses, bemols, becarres
@@ -166,7 +165,8 @@ class MIDIConverter:
                     adjusted_pitch = accidental_handler.apply_accidentals(note)
 
                     # Evenement Note on
-                    delta_time = self.beats_to_ticks(note.start_time - last_time)
+                    delta_time = self.beats_to_ticks(note.start_time - last_time) if \
+                        self.beats_to_ticks(note.start_time - last_time) >= 0 else 0
                     track.append(mido.Message(
                         'note_on',
                         note=adjusted_pitch,
@@ -175,7 +175,7 @@ class MIDIConverter:
                     ))
 
                     # Update de last time
-                    last_time = note.start_time
+                    last_time = note.start_time # peut potentiellement être supprimé
 
                     # Evenement Note off
                     delta_time = self.beats_to_ticks(note.duration)
