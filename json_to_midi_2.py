@@ -3,15 +3,14 @@ import os
 from music_structure import Note, Measure, Staff, Score, TimeSignature, KeySignature
 from midi_converter import convert_score_to_midi
 
-def get_list_of_classes(detections, wanted_classes, confidence_threshold):
-
+def get_list_of_classes(detections, wanted_classes):
     list_output = []
 
     if type(wanted_classes) == str:
         wanted_classes = [wanted_classes]
 
     for elem in detections:
-        if elem["class_name"] in wanted_classes and elem["confidence"] >= confidence_threshold:
+        if elem["class_name"] in wanted_classes:
             list_output.append(elem)
 
     return list_output
@@ -41,20 +40,13 @@ def attribute_staffs_to_list(list_staff, list_objects, sort_by_staff=True):
     return list_objects
 
 def attribute_relative_position_to_a_note(note, list_staff):
-
     staff = list_staff[note["attributed_staff"]]
     average_staff_height = sum(obj["height"] for obj in list_staff) / len(list_staff)
-    interval_height = average_staff_height/8
-    print(interval_height)
-    is_on_line = note["class_name"].endswith("OnLine")
+    interval_height = average_staff_height / 8
 
     dict_distance_pos = {}
-    if is_on_line:
-        start = -20
-    else:
-        start = -19
 
-    for i in range(start, start + 41, 2):
+    for i in range(-20, 21):
         dict_distance_pos[i] = abs(staff["y_center"] + (-i * interval_height) - note["y_center"])
 
     closest_position = min(dict_distance_pos, key=dict_distance_pos.get)
@@ -62,8 +54,7 @@ def attribute_relative_position_to_a_note(note, list_staff):
 
     return note
 
-def attribute_relative_key_to_a_note(note, list_keys, list_keys_signatures):
-
+def attribute_relative_key_to_a_note(note, list_keys):
     list_keys_on_staff = []
     note_staff_index = note["attributed_staff"]
 
@@ -72,32 +63,14 @@ def attribute_relative_key_to_a_note(note, list_keys, list_keys_signatures):
             list_keys_on_staff.append(elem)
 
     attributed_key = "unknown"
-    attributed_key_signature = "unknown"
-    signature_count = 0  # Initialize the counter here, outside any loops
-
     for elem in list_keys_on_staff:
         if elem["x_center"] < note["x_center"]:
             attributed_key = elem["class_name"]
 
-            for key_signature in list_keys_signatures:
-                if key_signature["attributed_staff"] == note_staff_index:
-                    is_signature_close_to_key = elem["x_center"] + (elem["width"] * 2) > key_signature["x_center"]
-
-                    if is_signature_close_to_key:
-                        signature_count += 1
-                        attributed_key_signature = key_signature["class_name"]
-
-
     note["attributed_key"] = attributed_key
-    if signature_count == 0:
-        note["attributed_key_signature"] = None
-    else:
-        note["attributed_key_signature"] = str(signature_count) + attributed_key_signature
-
     return note
 
-def attribute_duration_to_a_note(note, list_beams, list_flags, list_augmentation_dots):
-
+def attribute_duration_to_a_note(note, list_beams, list_flags):
     note_duration = -1
 
     if note["class_name"] in ["noteheadWholeOnLine", "noteheadWholeInSpace"]:
@@ -110,10 +83,8 @@ def attribute_duration_to_a_note(note, list_beams, list_flags, list_augmentation
     if note["class_name"] in ["noteheadBlackOnLine", "noteheadBlackInSpace"]:
         margin_x1 = note["x_center"] - (note["width"] * margin/2)
         margin_x2 = note["x_center"] + (note["width"] * margin/2)
-        #margin_y1 = note["y_center"] - (note["height"] * margin/2)
-        #margin_y2 = note["y_center"] + (note["height"] * margin/2)
 
-        #FLAGS
+        # FLAGS
         has_8th_flag = False
         for elem in list_flags:
             if elem["attributed_staff"] == note["attributed_staff"]:
@@ -127,7 +98,7 @@ def attribute_duration_to_a_note(note, list_beams, list_flags, list_augmentation
         if has_8th_flag:
             note_duration = 8
         else:
-            #BEAMS
+            # BEAMS
             count_beams = 0
             for elem in list_beams:
                 if elem["attributed_staff"] == note["attributed_staff"]:
@@ -139,62 +110,18 @@ def attribute_duration_to_a_note(note, list_beams, list_flags, list_augmentation
                         count_beams += 1
 
             if count_beams > 0:
-                note_duration = 2 ** (2 + count_beams) #ONE BEAM = 1/8, TWO BEAMS = 1/16
+                note_duration = 2 ** (2 + count_beams)  # ONE BEAM = 1/8, TWO BEAMS = 1/16
             else:
-                note_duration = 4 #JUST A BLACK
+                note_duration = 4  # JUST A BLACK
 
-        #AUGMENTATION DOT
-        for elem in list_augmentation_dots:
-            dot_is_on_same_line = abs(elem["y_center"] - note["y_center"]) < note["height"]
-            dot_is_close = abs(elem["x_center"] - note["x_center"]) < (note["width"] * 3)
-
-            if dot_is_on_same_line and dot_is_close:
-                note_duration = note_duration / 1.5
-                break
-
-    #print("beams : ", count_beams, "has_flag : ", has_8th_flag)
     note["attributed_duration"] = note_duration
     return note
 
-def attribute_duration_to_rests(list_rests):
-
-    dict_duration = {"restDoubleWhole": 0,
-            "restWhole": 1,
-            "restHalf": 2,
-            "restQuarter": 4,
-            "rest8th": 8,
-            "rest16th": 16,
-            "rest32nd": 32,
-            "rest64th": 64,
-            "rest128th": 128}
-
-    for i in range(len(list_rests)):
-        list_rests[i]["attributed_duration"] = dict_duration[list_rests[i]["class_name"]]
-
-    return list_rests
-
-def attribute_accidentals_to_a_note(note, list_accidentals):
-
-    note["attributed_accidentals"] = None
-
-    for elem in list_accidentals:
-        accidental_is_on_same_line = abs(elem["y_center"] - note["y_center"]) < (note["height"] * 2)
-        print(elem["x_center"] < note["x_center"])
-        accidental_is_close_left = (elem["x_center"] < note["x_center"]) and abs(elem["x_center"] - note["x_center"]) < (note["width"] * 3)
-
-        if accidental_is_on_same_line and accidental_is_close_left:
-            note["attributed_accidentals"] = elem["class_name"]
-            break
-
-    return note
-
-def attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags, list_accidentals, list_keys_signatures, list_augmentation_dots):
-
+def attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags):
     for i in range(len(list_notes)):
         list_notes[i] = attribute_relative_position_to_a_note(list_notes[i], list_staff)
-        list_notes[i] = attribute_accidentals_to_a_note(list_notes[i], list_accidentals)
-        list_notes[i] = attribute_relative_key_to_a_note(list_notes[i], list_keys, list_keys_signatures)
-        list_notes[i] = attribute_duration_to_a_note(list_notes[i], list_beams, list_flags, list_augmentation_dots)
+        list_notes[i] = attribute_relative_key_to_a_note(list_notes[i], list_keys)
+        list_notes[i] = attribute_duration_to_a_note(list_notes[i], list_beams, list_flags)
 
     return list_notes
 
@@ -314,45 +241,39 @@ def create_midi(json_file, output_file):
             # Vérifier si c'est déjà un fichier traité
             data = json.load(f)
             detections = data
-
-            list_staff = get_list_of_classes(detections, "staff", 0.6)
+            list_staff = get_list_of_classes(detections, "staff")
             list_staff = sorted(list_staff, key=lambda x: x['y1'])
 
             notes_labels = ["noteheadBlackInSpace", "noteheadBlackOnLine", "noteheadHalfInSpace", "noteheadHalfOnLine"]
-            list_notes = get_list_of_classes(detections, notes_labels, 0.6)
+            list_notes = get_list_of_classes(detections, notes_labels)
+            list_notes = [obj for obj in list_notes if obj['confidence'] >= 0.6]
 
-            rests_labels = ["restWhole", "restHalf", "restQuarter", "rest8th", "rest16th", "rest32nd", "rest64th", "rest128th"]
-            list_rests = get_list_of_classes(detections, rests_labels, 0.6)
+            rests_labels = ["restWhole", "restQuarter", "rest8th"]
+            list_rests = get_list_of_classes(detections, rests_labels)
+            list_rests = [obj for obj in list_rests if obj['confidence'] >= 0.6]
 
             keys_labels = ["clefF", "clefG"]
-            list_keys = get_list_of_classes(detections, keys_labels, 0.6)
+            list_keys = get_list_of_classes(detections, keys_labels)
 
-            list_augmentation_dots = get_list_of_classes(detections, "augmentationDot", 0.03)
+            keys_signatures_labels = ["keyFlat", "keySharp"]
+            list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels)
+            list_keys_signatures = [obj for obj in list_keys_signatures if obj['confidence'] >= 0.5]
 
-            keys_signatures_labels = ["keyFlat", "keySharp", "keyNatural"]
-            list_keys_signatures = get_list_of_classes(detections, keys_signatures_labels, 0.6)
+            list_beams = get_list_of_classes(detections, "beam")
+            list_beams = [obj for obj in list_beams if obj['confidence'] >= 0.6]
 
-            accidentals_labels = ["accidentalFlat", "accidentalSharp", "accidentalNatural"]
-            list_accidentals = get_list_of_classes(detections, accidentals_labels, 0.40)
-
-            list_beams = get_list_of_classes(detections, "beam", 0.6)
-            list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"], 0.6)
+            list_flags = get_list_of_classes(detections, ["flag8thUp", "flag8thDown"])
 
             # Attribuer les portées aux objets
             list_notes = attribute_staffs_to_list(list_staff, list_notes)
             list_rests = attribute_staffs_to_list(list_staff, list_rests)
-            list_augmentation_dots = attribute_staffs_to_list(list_staff, list_augmentation_dots)
             list_keys = attribute_staffs_to_list(list_staff, list_keys)
             list_keys_signatures = attribute_staffs_to_list(list_staff, list_keys_signatures)
-            list_accidentals = attribute_staffs_to_list(list_staff, list_accidentals)
             list_beams = attribute_staffs_to_list(list_staff, list_beams)
             list_flags = attribute_staffs_to_list(list_staff, list_flags)
 
             # Attribuer des caractéristiques aux notes
-            list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags, list_accidentals, list_keys_signatures, list_augmentation_dots)
-
-            # Attribuer une duration aux silences
-            list_rests = attribute_duration_to_rests(list_rests)
+            list_notes = attribute_characteristics_to_notes(list_notes, list_staff, list_keys, list_beams, list_flags)
 
             # Fusionner les notes et les silences
             list_musical_objects = list_notes + list_rests
@@ -397,106 +318,118 @@ def create_midi(json_file, output_file):
         key_info = "aucune armure"
     print(f"Armure utilisée: {key_info}")
 
-    # Filtrer les notes
-    treble_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 0]
-    bass_notes = [n for n in data if 'notehead' in n.get('class_name', '') and (int(n.get('attributed_staff')) % 2) == 1]
+    # Identifier toutes les portées présentes
+    all_staff_indices = set(n.get('attributed_staff', 0) for n in data if 'notehead' in n.get('class_name', ''))
+    print(f"Portées détectées: {sorted(all_staff_indices)}")
 
-    print(f"Trouvé {len(treble_notes)} notes à la main droite et {len(bass_notes)} notes à la main gauche")
+    # Organiser les notes par portée
+    notes_by_staff = {}
+    for n in data:
+        if 'notehead' in n.get('class_name', ''):
+            staff_idx = n.get('attributed_staff', 0)
+            if staff_idx not in notes_by_staff:
+                notes_by_staff[staff_idx] = []
+            notes_by_staff[staff_idx].append(n)
+
+    # Trier les portées
+    even_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 0])
+    odd_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 1])
+
+    print(f"Portées paires (main droite): {even_staffs}")
+    print(f"Portées impaires (main gauche): {odd_staffs}")
 
     # Créer la partition avec l'armure
     score = Score(tempo=79, key_signature=key_signature)  # tempo de 79 par défaut
 
     # Portée en clef de sol
-    if len(treble_notes) > 0:
-        treble_staff = Staff("treble")
-        treble_measure = Measure(start_time=0)
+    treble_staff = Staff("treble")
+    treble_measure = Measure(start_time=0)
+    current_time = 0.0
 
-        # Dico de notes triées par order_index pour traiter les accords correctement
-        treble_notes_by_order = {}
-        for note_data in treble_notes:
-            order_idx = note_data.get('order_index', 0)
-            if order_idx not in treble_notes_by_order:
-                treble_notes_by_order[order_idx] = []
-            treble_notes_by_order[order_idx].append(note_data)
+    # Traiter chaque portée paire séquentiellement
+    for staff_idx in even_staffs:
+        if staff_idx in notes_by_staff:
+            # Organiser les notes de cette portée par order_index
+            notes_by_order = {}
+            for note in notes_by_staff[staff_idx]:
+                order_idx = note.get('order_index', 0)
+                if order_idx not in notes_by_order:
+                    notes_by_order[order_idx] = []
+                notes_by_order[order_idx].append(note)
 
-        # Traiter chaque groupe de notes (accords ou notes individuelles)
-        current_time = 0.0
-        sorted_order = sorted(treble_notes_by_order.keys())
-        print(sorted_order)
-        print(treble_notes_by_order)
-        for i, order_idx in enumerate(sorted_order):
-            notes_group = treble_notes_by_order[order_idx]
-            # Toutes les notes d'un accord ont la même durée
-            duration_value = notes_group[0].get('attributed_duration', 4)
-            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
+            for order_idx in sorted(notes_by_order.keys()):
+                notes_group = notes_by_order[order_idx]
+                duration_value = notes_group[0].get('attributed_duration', 4)
+                duration = 4.0 / duration_value if duration_value > 0 else 1.0
 
-            # Ajouter chaque note de l'accord
-            for note_data in notes_group:
-                # Calculer la hauteur
-                clef_type = note_data.get('attributed_key', 'clefG')
-                relative_pos = note_data.get('relative_position', 0)
-                pitch = clef_position_to_midi(relative_pos, clef_type)
+                # Ajouter chaque note de l'accord
+                for note_data in notes_group:
+                    clef_type = note_data.get('attributed_key', 'clefG')
+                    relative_pos = note_data.get('relative_position', 0)
+                    pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                # Créer la note
-                note = Note(
-                    pitch=pitch,
-                    start_time=current_time,
-                    duration=duration,
-                    velocity=80
-                )
-                treble_measure.add_note(note)
+                    note = Note(
+                        pitch=pitch,
+                        start_time=current_time,
+                        duration=duration,
+                        velocity=80
+                    )
+                    treble_measure.add_note(note)
 
-            # Avancer dans le temps après traitement de l'accord
-            current_time += duration
+                # Avancer dans le temps après traitement de l'accord
+                current_time += duration
 
+    # Ajouter la mesure à la portée si des notes ont été ajoutées
+    if len(treble_measure.notes) > 0:
         treble_staff.add_measure(treble_measure)
         score.add_staff(treble_staff)
+        print(f"Ajouté {len(treble_measure.notes)} notes à la main droite")
 
     # Portée en clef de fa
-    if len(bass_notes) > 0:
-        bass_staff = Staff("bass")
-        bass_measure = Measure(start_time=0)
+    bass_staff = Staff("bass")
+    bass_measure = Measure(start_time=0)
+    current_time = 0.0
 
-        # Dico de notes triées par order_index pour traiter les accords correctement
-        bass_notes_by_order = {}
-        for note_data in bass_notes:
-            order_idx = note_data.get('order_index', 0)
-            if order_idx not in bass_notes_by_order:
-                bass_notes_by_order[order_idx] = []
-            bass_notes_by_order[order_idx].append(note_data)
+    # Traiter chaque portée impaire séquentiellement
+    for staff_idx in odd_staffs:
+        if staff_idx in notes_by_staff:
+            # Organiser les notes de cette portée par order_index
+            notes_by_order = {}
+            for note in notes_by_staff[staff_idx]:
+                order_idx = note.get('order_index', 0)
+                if order_idx not in notes_by_order:
+                    notes_by_order[order_idx] = []
+                notes_by_order[order_idx].append(note)
 
-        # Traiter chaque groupe de notes (accords ou notes individuelles)
-        current_time = 0.0
-        sorted_order = sorted(bass_notes_by_order.keys())
-        print(sorted_order)
-        print(bass_notes_by_order)
-        for i, order_idx in enumerate(sorted_order):
-            notes_group = bass_notes_by_order[order_idx]
-            # Toutes les notes d'un accord ont la même durée
-            duration_value = notes_group[0].get('attributed_duration', 4)
-            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
+            for order_idx in sorted(notes_by_order.keys()):
+                notes_group = notes_by_order[order_idx]
+                duration_value = notes_group[0].get('attributed_duration', 4)
+                duration = 4.0 / duration_value if duration_value > 0 else 1.0
 
-            # Ajouter chaque note de l'accord
-            for note_data in notes_group:
-                # Calculer la hauteur
-                clef_type = note_data.get('attributed_key', 'clefF')
-                relative_pos = note_data.get('relative_position', 0)
-                pitch = clef_position_to_midi(relative_pos, clef_type)
+                # Ajouter chaque note de l'accord
+                for note_data in notes_group:
+                    clef_type = note_data.get('attributed_key', 'clefF')
+                    relative_pos = note_data.get('relative_position', 0)
+                    pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                # Créer la note
-                note = Note(
-                    pitch=pitch,
-                    start_time=current_time,
-                    duration=duration,
-                    velocity=80
-                )
-                bass_measure.add_note(note)
+                    note = Note(
+                        pitch=pitch,
+                        start_time=current_time,
+                        duration=duration,
+                        velocity=80
+                    )
+                    bass_measure.add_note(note)
 
-            # Avancer dans le temps après traitement de l'accord
-            current_time += duration
+                # Avancer dans le temps après traitement de l'accord
+                current_time += duration
 
+    # Ajouter la mesure à la portée si des notes ont été ajoutées
+    if len(bass_measure.notes) > 0:
         bass_staff.add_measure(bass_measure)
         score.add_staff(bass_staff)
+        print(f"Ajouté {len(bass_measure.notes)} notes à la main gauche")
 
     # Convertir en MIDI
     print(f"Conversion en MIDI: {output_file}")
@@ -506,8 +439,8 @@ def create_midi(json_file, output_file):
     return score
 
 if __name__ == "__main__":
-    json_file = "raw_data/response_aphex_2_percent.json"
-    output_file = "raw_data/v2_response_aphex_2_percent.mid"
+    json_file = "aphex_1.json"
+    output_file = "aphex_1_new.mid"
 
     try:
         score = create_midi(json_file, output_file)
