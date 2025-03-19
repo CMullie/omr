@@ -305,7 +305,7 @@ def count_key_signatures(list_keys_signatures):
 
     return staff_key_counts
 
-def create_midi(json_file, output_file):
+def create_midi(json_file, output_file, tempo=79):
     print(f"Lecture du fichier {json_file}")
     try:
         with open(json_file, 'r') as f:
@@ -361,7 +361,7 @@ def create_midi(json_file, output_file):
             # Compter les altérations par portée
             key_counts = count_key_signatures(list_keys_signatures)
 
-            print(f"Altérations détectées {key_counts[0]}")
+            print(f"Altérations détectées {key_counts[0] if 0 in key_counts else 'aucune'}")
     except Exception as e:
         print(f"Erreur lors du chargement ou du traitement du fichier: {e}")
         raise
@@ -396,117 +396,126 @@ def create_midi(json_file, output_file):
     print(f"Armure utilisée: {key_info}")
 
     # Identifier toutes les portées présentes
-    all_staff_indices = set(n.get('attributed_staff', 0) for n in data if 'notehead' in n.get('class_name', ''))
+    all_staff_indices = set(n.get('attributed_staff', 0) for n in data if 'notehead' in n.get('class_name', '') or n.get('class_name', '').startswith('rest'))
     print(f"Portées détectées: {sorted(all_staff_indices)}")
 
-    # Organiser les notes par portée
-    notes_by_staff = {}
-    for n in data:
-        if 'notehead' in n.get('class_name', ''):
-            staff_idx = n.get('attributed_staff', 0)
-            if staff_idx not in notes_by_staff:
-                notes_by_staff[staff_idx] = []
-            notes_by_staff[staff_idx].append(n)
+    # Filtrer les objets musicaux par portée (méthode json_to_midi)
+    treble_objects = [obj for obj in data if (int(obj.get('attributed_staff', 0)) % 2) == 0]
+    bass_objects = [obj for obj in data if (int(obj.get('attributed_staff', 0)) % 2) == 1]
 
-    # Trier les portées
-    even_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 0])
-    odd_staffs = sorted([idx for idx in all_staff_indices if idx % 2 == 1])
-
-    print(f"Portées paires (main droite): {even_staffs}")
-    print(f"Portées impaires (main gauche): {odd_staffs}")
+    print(f"Trouvé {len([obj for obj in treble_objects if 'notehead' in obj.get('class_name', '')])} notes et {len([obj for obj in treble_objects if obj.get('class_name', '').startswith('rest')])} silences à la main droite")
+    print(f"Trouvé {len([obj for obj in bass_objects if 'notehead' in obj.get('class_name', '')])} notes et {len([obj for obj in bass_objects if obj.get('class_name', '').startswith('rest')])} silences à la main gauche")
 
     # Créer la partition avec l'armure
-    score = Score(tempo=79, key_signature=key_signature)  # tempo de 79 par défaut
+    score = Score(tempo=tempo, key_signature=key_signature)
 
     # Portée en clef de sol
-    treble_staff = Staff("treble")
-    treble_measure = Measure(start_time=0)
-    current_time = 0.0
+    if treble_objects:
+        treble_staff = Staff("treble")
+        treble_measure = Measure(start_time=0)
 
-    # Traiter chaque portée paire séquentiellement
-    for staff_idx in even_staffs:
-        if staff_idx in notes_by_staff:
-            # Organiser les notes de cette portée par order_index
-            notes_by_order = {}
-            for note in notes_by_staff[staff_idx]:
-                order_idx = note.get('order_index', 0)
-                if order_idx not in notes_by_order:
-                    notes_by_order[order_idx] = []
-                notes_by_order[order_idx].append(note)
+        # Dico d'objets musicaux triés par order_index
+        treble_objects_by_order = {}
+        for obj_data in treble_objects:
+            order_idx = obj_data.get('order_index', 0)
+            if order_idx not in treble_objects_by_order:
+                treble_objects_by_order[order_idx] = []
+            treble_objects_by_order[order_idx].append(obj_data)
 
-            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
-            for order_idx in sorted(notes_by_order.keys()):
-                notes_group = notes_by_order[order_idx]
-                duration_value = notes_group[0].get('attributed_duration', 4)
-                duration = 4.0 / duration_value if duration_value > 0 else 1.0
+        # Traiter chaque groupe d'objets musicaux
+        current_time = 0.0
+        sorted_order = sorted(treble_objects_by_order.keys())
+        print("Ordre des objets en clef de sol:", sorted_order)
 
+        for order_idx in sorted_order:
+            objects_group = treble_objects_by_order[order_idx]
+            # Vérifier s'il s'agit d'un groupe de notes ou d'un silence
+            is_rest = any(obj.get('class_name', '').startswith('rest') for obj in objects_group)
+
+            # Toutes les notes/silences d'un même index ont la même durée
+            duration_value = objects_group[0].get('attributed_duration', 4)
+            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+
+            if is_rest:
+                # C'est un silence, ajouter du temps sans ajouter de note
+                current_time += duration
+            else:
                 # Ajouter chaque note de l'accord
-                for note_data in notes_group:
-                    clef_type = note_data.get('attributed_key', 'clefG')
-                    relative_pos = note_data.get('relative_position', 0)
-                    pitch = clef_position_to_midi(relative_pos, clef_type)
+                for note_data in objects_group:
+                    if 'notehead' in note_data.get('class_name', ''):
+                        # Calculer la hauteur
+                        clef_type = note_data.get('attributed_key', 'clefG')
+                        relative_pos = note_data.get('relative_position', 0)
+                        pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                    note = Note(
-                        pitch=pitch,
-                        start_time=current_time,
-                        duration=duration,
-                        velocity=80
-                    )
-                    treble_measure.add_note(note)
+                        # Créer la note
+                        note = Note(
+                            pitch=pitch,
+                            start_time=current_time,
+                            duration=duration,
+                            velocity=80
+                        )
+                        treble_measure.add_note(note)
 
                 # Avancer dans le temps après traitement de l'accord
                 current_time += duration
 
-    # Ajouter la mesure à la portée si des notes ont été ajoutées
-    if len(treble_measure.notes) > 0:
         treble_staff.add_measure(treble_measure)
         score.add_staff(treble_staff)
-        print(f"Ajouté {len(treble_measure.notes)} notes à la main droite")
 
     # Portée en clef de fa
-    bass_staff = Staff("bass")
-    bass_measure = Measure(start_time=0)
-    current_time = 0.0
+    if bass_objects:
+        bass_staff = Staff("bass")
+        bass_measure = Measure(start_time=0)
 
-    # Traiter chaque portée impaire séquentiellement
-    for staff_idx in odd_staffs:
-        if staff_idx in notes_by_staff:
-            # Organiser les notes de cette portée par order_index
-            notes_by_order = {}
-            for note in notes_by_staff[staff_idx]:
-                order_idx = note.get('order_index', 0)
-                if order_idx not in notes_by_order:
-                    notes_by_order[order_idx] = []
-                notes_by_order[order_idx].append(note)
+        # Dico d'objets musicaux triés par order_index
+        bass_objects_by_order = {}
+        for obj_data in bass_objects:
+            order_idx = obj_data.get('order_index', 0)
+            if order_idx not in bass_objects_by_order:
+                bass_objects_by_order[order_idx] = []
+            bass_objects_by_order[order_idx].append(obj_data)
 
-            # Traiter chaque groupe de notes (accords ou notes individuelles) dans cette portée
-            for order_idx in sorted(notes_by_order.keys()):
-                notes_group = notes_by_order[order_idx]
-                duration_value = notes_group[0].get('attributed_duration', 4)
-                duration = 4.0 / duration_value if duration_value > 0 else 1.0
+        # Traiter chaque groupe d'objets musicaux
+        current_time = 0.0
+        sorted_order = sorted(bass_objects_by_order.keys())
+        print("Ordre des objets en clef de fa:", sorted_order)
 
+        for order_idx in sorted_order:
+            objects_group = bass_objects_by_order[order_idx]
+            # Vérifier s'il s'agit d'un groupe de notes ou d'un silence
+            is_rest = any(obj.get('class_name', '').startswith('rest') for obj in objects_group)
+
+            # Toutes les notes/silences d'un même index ont la même durée
+            duration_value = objects_group[0].get('attributed_duration', 4)
+            duration = 4.0 / duration_value if duration_value > 0 else 1.0
+
+            if is_rest:
+                # C'est un silence, ajouter du temps sans ajouter de note
+                current_time += duration
+            else:
                 # Ajouter chaque note de l'accord
-                for note_data in notes_group:
-                    clef_type = note_data.get('attributed_key', 'clefF')
-                    relative_pos = note_data.get('relative_position', 0)
-                    pitch = clef_position_to_midi(relative_pos, clef_type)
+                for note_data in objects_group:
+                    if 'notehead' in note_data.get('class_name', ''):
+                        # Calculer la hauteur
+                        clef_type = note_data.get('attributed_key', 'clefF')
+                        relative_pos = note_data.get('relative_position', 0)
+                        pitch = clef_position_to_midi(relative_pos, clef_type)
 
-                    note = Note(
-                        pitch=pitch,
-                        start_time=current_time,
-                        duration=duration,
-                        velocity=80
-                    )
-                    bass_measure.add_note(note)
+                        # Créer la note
+                        note = Note(
+                            pitch=pitch,
+                            start_time=current_time,
+                            duration=duration,
+                            velocity=80
+                        )
+                        bass_measure.add_note(note)
 
                 # Avancer dans le temps après traitement de l'accord
                 current_time += duration
 
-    # Ajouter la mesure à la portée si des notes ont été ajoutées
-    if len(bass_measure.notes) > 0:
         bass_staff.add_measure(bass_measure)
         score.add_staff(bass_staff)
-        print(f"Ajouté {len(bass_measure.notes)} notes à la main gauche")
 
     # Convertir en MIDI
     print(f"Conversion en MIDI: {output_file}")
@@ -516,8 +525,8 @@ def create_midi(json_file, output_file):
     return score
 
 if __name__ == "__main__":
-    json_file = "metallica.json"
-    output_file = "metallica.mid"
+    json_file = "aphex_accords.json"
+    output_file = "aphex_accords.mid"
 
     try:
         score = create_midi(json_file, output_file)
