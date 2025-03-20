@@ -8,8 +8,6 @@ from PIL import Image
 import io
 import tempfile
 import logging
-import threading
-from queue import Queue
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -25,23 +23,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state variables
-if "job_result" not in st.session_state:
-    st.session_state.job_result = None
+# Initialize session state
+if "file_processed" not in st.session_state:
+    st.session_state.file_processed = False
 if "job_id" not in st.session_state:
     st.session_state.job_id = None
-if "processing_complete" not in st.session_state:
-    st.session_state.processing_complete = False
 if "visualization_image" not in st.session_state:
     st.session_state.visualization_image = None
 if "detection_data" not in st.session_state:
     st.session_state.detection_data = None
-if "midi_content" not in st.session_state:
-    st.session_state.midi_content = None
-if "is_processing" not in st.session_state:
-    st.session_state.is_processing = False
+if "uploaded_file_name" not in st.session_state:
+    st.session_state.uploaded_file_name = None
 if "processing_error" not in st.session_state:
     st.session_state.processing_error = None
+if "selected_tempo" not in st.session_state:
+    st.session_state.selected_tempo = 79
 
 
 def create_download_link(content, filename, link_text):
@@ -90,24 +86,23 @@ def process_sheet_music(file, tempo=79):
                     logger.error(f"Raw response: {response.text[:500]}")
 
                 os.unlink(temp_file_path)
-                return None
+                return None, visualization_image
 
             logger.info("Successfully received process response")
 
         except Exception as e:
             logger.error(f"Process request failed: {str(e)}")
             os.unlink(temp_file_path)
-            return None
+            return None, visualization_image
 
         # Clean up and return
         os.unlink(temp_file_path)
         result = response.json()
-        result["visualization_image"] = visualization_image
-        return result
+        return result, visualization_image
 
     except Exception as e:
         logger.error(f"Error in process_sheet_music: {str(e)}")
-        return None
+        return None, None
 
 
 def poll_job_status(job_id):
@@ -196,9 +191,6 @@ def embed_midi_player(midi_url):
         midi_content = response.content
         logger.info(f"Successfully retrieved MIDI content of size {len(midi_content)} bytes")
 
-        # Store midi content in session state for future use
-        st.session_state.midi_content = midi_content
-
         download_link = create_download_link(
             midi_content,
             "sheet_music.mid",
@@ -238,241 +230,123 @@ def embed_midi_player(midi_url):
         st.error(f"Error embedding MIDI player: {str(e)}")
 
 
-def fetch_detection_and_midi(job_id):
-    """Background function to fetch detection data and MIDI content"""
-    try:
-        # 1. Fetch detection data
-        detection_response = requests.get(f"{API_URL}/preview/{job_id}")
-        if detection_response.status_code == 200:
-            st.session_state.detection_data = detection_response.json()
-            logger.info(f"Successfully fetched detection data for job {job_id}")
-        else:
-            logger.error(f"Failed to get detection preview: {detection_response.status_code}")
-            st.session_state.processing_error = f"Failed to get detection preview: {detection_response.status_code}"
-
-        # 2. Fetch MIDI content
-        midi_url = f"{API_URL}/download/{job_id}"
-        midi_response = requests.get(midi_url)
-        if midi_response.status_code == 200:
-            st.session_state.midi_content = midi_response.content
-            logger.info(f"Successfully fetched MIDI content for job {job_id}")
-        else:
-            logger.error(f"Failed to get MIDI content: {midi_response.status_code}")
-            st.session_state.processing_error = f"Failed to get MIDI content: {midi_response.status_code}"
-
-        # Mark processing as complete
-        st.session_state.processing_complete = True
-        st.session_state.is_processing = False
-
-    except Exception as e:
-        logger.error(f"Error in background processing: {str(e)}")
-        st.session_state.processing_error = f"Error in background processing: {str(e)}"
-        st.session_state.is_processing = False
-
-
-def background_process(uploaded_file, tempo):
-    """Function to handle background processing when image is uploaded"""
-    try:
-        if st.session_state.is_processing:
-            logger.info("Already processing, skipping duplicate request")
-            return
-
-        # Set processing flag
-        st.session_state.is_processing = True
-        st.session_state.processing_complete = False
-        st.session_state.processing_error = None
-
-        # Process the sheet music
-        logger.info(f"Starting background processing with tempo {tempo}")
-        job_response = process_sheet_music(uploaded_file, tempo=tempo)
-
-        if not job_response:
-            logger.error("Failed to process sheet music")
-            st.session_state.processing_error = "Failed to process sheet music"
-            st.session_state.is_processing = False
-            return
-
-        # Store job ID and visualization image
-        job_id = job_response.get("job_id")
-        st.session_state.job_id = job_id
-        logger.info(f"Job created with ID: {job_id}")
-
-        if "visualization_image" in job_response and job_response["visualization_image"]:
-            st.session_state.visualization_image = job_response["visualization_image"]
-            logger.info("Stored visualization image in session state")
-
-        # Poll for job completion
-        logger.info(f"Polling for completion of job {job_id}")
-        result = poll_job_status(job_id)
-
-        if not result:
-            logger.error(f"Job {job_id} failed or timed out")
-            st.session_state.processing_error = f"Job {job_id} failed or timed out"
-            st.session_state.is_processing = False
-            return
-
-        # Store job result
-        st.session_state.job_result = result
-        logger.info(f"Job {job_id} completed successfully with {result.get('element_count', 0)} elements")
-
-        # Fetch detection data and MIDI content
-        logger.info(f"Fetching final results for job {job_id}")
-        fetch_detection_and_midi(job_id)
-
-    except Exception as e:
-        logger.error(f"Error in background processing: {str(e)}")
-        st.session_state.processing_error = f"Error in background processing: {str(e)}"
-        st.session_state.is_processing = False
-
-
 # Main app
 logger.info("Starting app")
 
 st.title("🎵 Sheet Music to MIDI Converter")
 st.write("Upload a sheet music image to convert it to a playable MIDI file.")
 
+# File uploader
 uploaded_file = st.file_uploader("Choose a sheet music image", type=["png", "jpg", "jpeg"])
 
+# Check if a new file was uploaded
 if uploaded_file is not None:
+    # Reset state when a new file is uploaded
+    if st.session_state.uploaded_file_name != uploaded_file.name:
+        st.session_state.uploaded_file_name = uploaded_file.name
+        st.session_state.file_processed = False
+        st.session_state.job_id = None
+        st.session_state.visualization_image = None
+        st.session_state.detection_data = None
+        st.session_state.processing_error = None
+        logger.info(f"New file uploaded: {uploaded_file.name}")
+
+    # Display the uploaded image
     try:
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Sheet Music", use_column_width=True)
-
-        # Add tempo slider
-        selected_tempo = st.slider(
-            "Select Tempo (BPM)",
-            min_value=40,
-            max_value=200,
-            value=79,
-            step=1
-        )
-
-        # Start background processing when image is uploaded
-        if not st.session_state.is_processing and not st.session_state.processing_complete:
-            # Start processing in background
-            bg_thread = threading.Thread(
-                target=background_process,
-                args=(uploaded_file, selected_tempo)
-            )
-            bg_thread.daemon = True
-            bg_thread.start()
-
-            # Show more noticeable processing indicator
-            if st.session_state.is_processing:
-                processing_info = st.info("🔄 Preparing sheet music analysis in background... Click 'Convert to MIDI' when ready.")
-                progress_placeholder = st.empty()
-
-                # Show a small indicator that work is happening
-                import itertools
-                indicators = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-
-                def update_spinner():
-                    for _ in range(10):  # Show a few iterations of the spinner
-                        if not st.session_state.is_processing:
-                            break
-                        progress_placeholder.text(f"Processing: {next(indicators)}")
-                        time.sleep(0.2)
-
-                # Start spinner in a non-blocking way
-                update_thread = threading.Thread(target=update_spinner)
-                update_thread.daemon = True
-                update_thread.start()
-
-        # Show convert button
-        if st.button("Convert to MIDI"):
-            # Always show progress indicator when button is clicked
-            progress_container = st.container()
-            with progress_container:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                if st.session_state.processing_error:
-                    # If there was an error in background processing
-                    progress_bar.progress(1.0)
-                    status_text.text("Status: Failed ❌")
-                    st.error(f"Error during processing: {st.session_state.processing_error}")
-                elif st.session_state.processing_complete:
-                    # If processing is already complete, show 100% progress
-                    progress_bar.progress(1.0)
-                    status_text.text("Status: Completed! ✅")
-                else:
-                    # If still processing, show animated progress
-                    status_text.text("Status: Processing your sheet music...")
-
-                    for percent_complete in [0.2, 0.4, 0.6, 0.8]:
-                        progress_bar.progress(percent_complete)
-                        time.sleep(0.5)
-
-                    # Wait for processing to complete (with timeout)
-                    timeout = 30  # seconds
-                    start_time = time.time()
-                    while st.session_state.is_processing and (time.time() - start_time < timeout):
-                        # Show pulsing progress bar while waiting
-                        for pulse in [0.8, 0.9, 0.95, 0.9, 0.8]:
-                            progress_bar.progress(pulse)
-                            time.sleep(0.5)
-                            if not st.session_state.is_processing:
-                                break
-
-                    if st.session_state.processing_complete:
-                        progress_bar.progress(1.0)
-                        status_text.text("Status: Completed! ✅")
-                    else:
-                        progress_bar.progress(0.9)
-                        status_text.text("Status: Still processing in background... ⏳")
-
-            # If processing is complete, show results
-            if st.session_state.processing_complete:
-                st.success(f"Successfully converted your sheet music! Found {st.session_state.job_result.get('element_count', 0)} musical elements.")
-
-                # Display detection visualization
-                if st.session_state.detection_data:
-                    visualize_detections(st.session_state.detection_data)
-
-                # Display MIDI player
-                if st.session_state.midi_content:
-                    st.subheader("MIDI Playback")
-
-                    download_link = create_download_link(
-                        st.session_state.midi_content,
-                        "sheet_music.mid",
-                        "⬇️ Download MIDI File"
-                    )
-                    st.markdown(download_link, unsafe_allow_html=True)
-
-                    st.write("MIDI Preview:")
-
-                    midi_b64 = base64.b64encode(st.session_state.midi_content).decode()
-
-                    st.info("Loading MIDI player... If playback doesn't work, you can still download the MIDI file.")
-
-                    midi_player_html = f"""
-                    <script
-                        src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.77,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"
-                    ></script>
-
-                    <midi-player
-                        src="data:audio/midi;base64,{midi_b64}"
-                        sound-font="https://storage.googleapis.com/magentadata/js/soundfonts/sgm_plus"
-                        visualizer="#myVisualizer"
-                        style="width:100%;">
-                    </midi-player>
-
-                    <midi-visualizer
-                        id="myVisualizer"
-                        type="piano-roll"
-                        style="width:100%;height:200px">
-                    </midi-visualizer>
-                    """
-
-                    st.components.v1.html(midi_player_html, height=350)
-                else:
-                    st.error("MIDI content could not be retrieved. Please try again.")
-
     except Exception as e:
         logger.error(f"Error opening uploaded image: {str(e)}")
         st.error(f"Error opening image: {str(e)}")
 
+    # Tempo slider
+    st.session_state.selected_tempo = st.slider(
+        "Select Tempo (BPM)",
+        min_value=40,
+        max_value=200,
+        value=st.session_state.selected_tempo,
+        step=1
+    )
+
+    # Convert button with clear processing steps
+    if st.button("Convert to MIDI"):
+        # Create empty containers for progress display
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        status_text.text("Status: Starting conversion process...")
+        progress_bar.progress(10)
+
+        try:
+            # Process the sheet music
+            status_text.text("Status: Processing image...")
+            progress_bar.progress(20)
+
+            # Only process if not already processed
+            if not st.session_state.file_processed:
+                result, visualization_image = process_sheet_music(uploaded_file, tempo=st.session_state.selected_tempo)
+
+                if result is None:
+                    st.error("Failed to process sheet music. Please try again.")
+                    status_text.text("Status: Failed to process image ❌")
+                    progress_bar.progress(100)
+                else:
+                    # Store results in session state
+                    st.session_state.job_id = result.get("job_id")
+                    st.session_state.visualization_image = visualization_image
+                    st.session_state.file_processed = True
+
+            if st.session_state.file_processed and st.session_state.job_id:
+                job_id = st.session_state.job_id
+
+                # Poll for job completion
+                status_text.text(f"Status: Analyzing music elements (Job ID: {job_id})...")
+                progress_bar.progress(40)
+
+                job_result = poll_job_status(job_id)
+
+                if job_result:
+                    progress_bar.progress(60)
+                    status_text.text("Status: Fetching detection data...")
+
+                    # Fetch detection data
+                    detection_response = requests.get(f"{API_URL}/preview/{job_id}")
+                    if detection_response.status_code == 200:
+                        st.session_state.detection_data = detection_response.json()
+                        logger.info(f"Successfully fetched detection data for job {job_id}")
+
+                        # Display detection visualization
+                        progress_bar.progress(80)
+                        status_text.text("Status: Generating MIDI...")
+
+                        if st.session_state.detection_data:
+                            # Display the results
+                            progress_bar.progress(100)
+                            status_text.text("Status: Completed! ✅")
+
+                            st.success(f"Successfully converted your sheet music! Found {job_result.get('element_count', 0)} musical elements.")
+
+                            # Show detection visualization
+                            visualize_detections(st.session_state.detection_data)
+
+                            # Show MIDI player
+                            midi_url = f"{API_URL}/download/{job_id}"
+                            embed_midi_player(midi_url)
+                    else:
+                        logger.error(f"Failed to get detection preview: {detection_response.status_code}")
+                        st.error(f"Failed to get detection preview: {detection_response.status_code}")
+                        status_text.text("Status: Failed to get detection data ❌")
+                        progress_bar.progress(100)
+                else:
+                    logger.error(f"Job {job_id} failed or timed out")
+                    st.error(f"Job {job_id} failed or timed out. Please try again.")
+                    status_text.text("Status: Processing failed ❌")
+                    progress_bar.progress(100)
+        except Exception as e:
+            logger.error(f"Error during processing: {str(e)}")
+            st.error(f"An error occurred: {str(e)}")
+            status_text.text("Status: Error occurred ❌")
+            progress_bar.progress(100)
 
 st.markdown("---")
 st.markdown("Made with ❤️ by the team behind | [Optical Music Recognition](https://github.com/cmullie/omr)")
