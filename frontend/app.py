@@ -283,6 +283,7 @@ def background_process(uploaded_file, tempo):
         st.session_state.processing_error = None
 
         # Process the sheet music
+        logger.info(f"Starting background processing with tempo {tempo}")
         job_response = process_sheet_music(uploaded_file, tempo=tempo)
 
         if not job_response:
@@ -301,6 +302,7 @@ def background_process(uploaded_file, tempo):
             logger.info("Stored visualization image in session state")
 
         # Poll for job completion
+        logger.info(f"Polling for completion of job {job_id}")
         result = poll_job_status(job_id)
 
         if not result:
@@ -311,9 +313,10 @@ def background_process(uploaded_file, tempo):
 
         # Store job result
         st.session_state.job_result = result
-        logger.info(f"Job {job_id} completed successfully")
+        logger.info(f"Job {job_id} completed successfully with {result.get('element_count', 0)} elements")
 
         # Fetch detection data and MIDI content
+        logger.info(f"Fetching final results for job {job_id}")
         fetch_detection_and_midi(job_id)
 
     except Exception as e:
@@ -354,34 +357,68 @@ if uploaded_file is not None:
             bg_thread.daemon = True
             bg_thread.start()
 
-            # Show subtle processing indicator
-            with st.sidebar:
-                if st.session_state.is_processing:
-                    st.info("Preparing sheet music analysis in background...")
+            # Show more noticeable processing indicator
+            if st.session_state.is_processing:
+                processing_info = st.info("🔄 Preparing sheet music analysis in background... Click 'Convert to MIDI' when ready.")
+                progress_placeholder = st.empty()
+
+                # Show a small indicator that work is happening
+                import itertools
+                indicators = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+
+                def update_spinner():
+                    for _ in range(10):  # Show a few iterations of the spinner
+                        if not st.session_state.is_processing:
+                            break
+                        progress_placeholder.text(f"Processing: {next(indicators)}")
+                        time.sleep(0.2)
+
+                # Start spinner in a non-blocking way
+                update_thread = threading.Thread(target=update_spinner)
+                update_thread.daemon = True
+                update_thread.start()
 
         # Show convert button
         if st.button("Convert to MIDI"):
-            if st.session_state.processing_error:
-                # If there was an error in background processing
-                st.error(f"Error during processing: {st.session_state.processing_error}")
-            elif not st.session_state.processing_complete and st.session_state.is_processing:
-                # If still processing, show progress
-                with st.spinner("Processing your sheet music..."):
-                    progress_bar = st.progress(0.5)
-                    status_text = st.empty()
-                    status_text.text("Status: Processing...")
+            # Always show progress indicator when button is clicked
+            progress_container = st.container()
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                if st.session_state.processing_error:
+                    # If there was an error in background processing
+                    progress_bar.progress(1.0)
+                    status_text.text("Status: Failed ❌")
+                    st.error(f"Error during processing: {st.session_state.processing_error}")
+                elif st.session_state.processing_complete:
+                    # If processing is already complete, show 100% progress
+                    progress_bar.progress(1.0)
+                    status_text.text("Status: Completed! ✅")
+                else:
+                    # If still processing, show animated progress
+                    status_text.text("Status: Processing your sheet music...")
+
+                    for percent_complete in [0.2, 0.4, 0.6, 0.8]:
+                        progress_bar.progress(percent_complete)
+                        time.sleep(0.5)
 
                     # Wait for processing to complete (with timeout)
                     timeout = 30  # seconds
                     start_time = time.time()
                     while st.session_state.is_processing and (time.time() - start_time < timeout):
-                        time.sleep(0.5)
+                        # Show pulsing progress bar while waiting
+                        for pulse in [0.8, 0.9, 0.95, 0.9, 0.8]:
+                            progress_bar.progress(pulse)
+                            time.sleep(0.5)
+                            if not st.session_state.is_processing:
+                                break
 
                     if st.session_state.processing_complete:
                         progress_bar.progress(1.0)
                         status_text.text("Status: Completed! ✅")
                     else:
-                        progress_bar.progress(1.0)
+                        progress_bar.progress(0.9)
                         status_text.text("Status: Still processing in background... ⏳")
 
             # If processing is complete, show results
